@@ -1,0 +1,83 @@
+services:
+  # otel-collector-debug:
+  #   image: otel/opentelemetry-collector-contrib:latest
+  #   command: ["--config=/etc/otel-collector-config.yaml"]
+  #   volumes:
+  #     - ./otel-collector-config-debug.yaml:/etc/otel-collector-config.yaml
+  #   ports:
+  #     - "4317:4317"
+  #     - "4318:4318"
+  
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.141.0@sha256:b14234c4bc1b7364629af272e564913bb57bdc9736d45b8b6db5ab3417dc75f9
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./library/configs/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+    depends_on:
+      - tempo
+      # - loki 
+
+  # # MySQL - Database backend for DB demo
+  # mysql:
+  #   image: mysql:9.6@sha256:c5df04bee1a42b74a5841c6409e669cf62126cd0416f00c1cea8ab933b9361b9
+  #   container_name: mysql
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=root
+  #     - MYSQL_DATABASE=demodb
+  #     - MYSQL_USER=demo
+  #     - MYSQL_PASSWORD=demo
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+  #   # networks:
+  #   #   - observability
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 30s
+  
+  # Prometheus Backend (Metrics)
+  # prometheus:
+  #   image: prom/prometheus:v3.8.0@sha256:d936808bdea528155c0154a922cd42fd75716b8bb7ba302641350f9f3eaeba09
+  #   container_name: prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #   volumes:
+  #     - ./library/configs/prometheus-config.yaml:/etc/prometheus/prometheus.yml
+  #   ports:
+  #     - "9090:9090"
+
+  # Tempo Backend (Traces)
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    command: [ "-config.file=/etc/tempo.yaml", "-target=all" ]
+    volumes:
+      - ./library/configs/tempo-config.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200" # Tempo UI/API
+  
+  # Grafana Frontend (Visualization)
+  grafana:
+    image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./library/configs/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      # - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    depends_on:
+      # - prometheus
+      - tempo

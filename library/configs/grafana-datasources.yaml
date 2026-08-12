@@ -1,0 +1,68 @@
+apiVersion: 1
+
+datasources:
+  # Prometheus Configuration
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus            # NEW: needed so Tempo's datasourceUid: prometheus resolves
+    access: proxy
+    url: http://prometheus:9090
+    editable: true
+    allowUiUpdates: false
+    jsonData:
+      version: 2
+      exemplarTraceIdDestinations:
+        # Links the traceID from your metrics to the Tempo data source
+        - datasourceUid: tempo
+          name: traceID
+
+  # Tempo Configuration
+  - name: Tempo
+    type: tempo
+    uid: tempo                 # NEW: needed so Prometheus's datasourceUid: tempo resolves
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    editable: true
+    allowUiUpdates: false
+    jsonData:
+      version: 2
+      httpMethod: GET
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -1m
+        spanEndTimeShift: 1m
+        tags:
+          - key: http.target
+            value: http_target
+          - key: http.status_code
+            value: http_status_code
+          - key: http.method
+            value: http_method
+        queries:
+          - name: 'View Request Rate'
+            query: 'sum(rate(otel_http_server_duration_milliseconds_count{$__tags}[1m]))'
+      # NEW: trace -> logs correlation
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: true
+
+  # NEW: Loki Configuration
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    allowUiUpdates: false
+    jsonData:
+      derivedFields:
+        # Makes a trace_id found in a log line clickable, jumping to that
+        # trace in Tempo. Requires your app to emit trace_id as a log field
+        # (it will, if logs go through the OTel Logs SDK/otelslog bridge).
+        - datasourceUid: tempo
+          matcherRegex: '"trace_id":"(\w+)"'
+          name: TraceID
+          url: '$${__value.raw}'

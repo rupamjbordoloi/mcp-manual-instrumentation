@@ -35,7 +35,7 @@ cd server
 set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && go run .
 
 # terminal B
-cd server
+cd client
 set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && go run .
 ```
 

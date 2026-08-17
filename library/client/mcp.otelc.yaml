@@ -1,0 +1,45 @@
+mcp_client_connect:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: Connect
+    recv: "*Client"
+  do:
+    - inject_hooks:
+        before: BeforeConnect
+        after: AfterConnect
+        path: "library/client"
+
+mcp_client_call_tool:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: CallTool
+    recv: "*ClientSession"
+  do:
+    - inject_hooks:
+        before: BeforeCallTool
+        after: AfterCallTool
+        path: "library/client"
+
+mcp_client_close:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: Close
+    recv: "*ClientSession"
+  do:
+    - inject_hooks:
+        before: BeforeClose
+        after: AfterClose
+        path: "library/client"
+
+mcp_client_session_root_span:
+  target: main
+  where:
+    func: run
+  do:
+    - inject_code:
+        raw: |
+          ctx, __mcpSessionSpan := otel.Tracer("mcp").Start(ctx, "mcp.session", trace.WithSpanKind(trace.SpanKindClient))
+          defer __mcpSessionSpan.End()
+        imports:
+          otel: "go.opentelemetry.io/otel"
+          trace: "go.opentelemetry.io/otel/trace"

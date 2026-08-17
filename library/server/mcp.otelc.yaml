@@ -1,0 +1,11 @@
+mcp_server_tool_greet:
+  target: main
+  where:
+    func: SayHi
+    signature_contains:
+      args: [context.Context]
+  do:
+    - inject_hooks:
+        before: BeforeToolHandler
+        after: AfterToolHandler
+        path: "library/server"

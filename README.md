@@ -22,21 +22,23 @@ code, same as before.
 ## 1. Start the collector
 
 ```bash
-docker compose up
+docker compose up -d
 ```
 
 ## 2. Build normally through otelc — no --rules flag needed
 
 ```bash
-go mod tidy
+# go mod tidy
 
 # terminal A
 cd server
-set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && go run .
+otelc go build .
+set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && server.exe
 
 # terminal B
 cd client
-set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && go run .
+otelc go build .
+set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && client.exe
 ```
 
 ## 3. View traces

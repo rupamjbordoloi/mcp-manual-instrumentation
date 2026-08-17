@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	clienttrace "library/client"
 )
@@ -23,9 +22,6 @@ func run(ctx context.Context) error {
 		// net/http/client instrumentation (blank-imported in
 		// otel.instrumentation.go) instruments the default transport
 		// automatically at compile time.
-		HTTPClient: &http.Client{
-			Transport: otelhttp.NewTransport(http.DefaultTransport),
-		},
 	}
 
 	session, err := client.Connect(ctx, transport, nil)

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	servertrace "library/server"
 )
@@ -61,9 +60,7 @@ func main() {
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("DELETE /mcp", mcpHandler)
 
-	instrumentedHandler := otelhttp.NewHandler(mux, "mcp-server")
-
-	srv := &http.Server{Addr: ":8080", Handler: instrumentedHandler}
+	srv := &http.Server{Addr: ":8080", Handler: mux}
 
 	go func() {
 		log.Println("MCP server listening on :8080/mcp")

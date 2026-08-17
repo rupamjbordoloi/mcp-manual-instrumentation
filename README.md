@@ -33,14 +33,19 @@ docker compose up -d
 # terminal A
 cd server
 otelc go build .
-set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && server.exe
+server.exe
 
 # terminal B
 cd client
 otelc go build .
-set "OTEL_GO_DISABLED_INSTRUMENTATIONS=nethttp" && client.exe
+client.exe
 ```
 
 ## 3. View traces
 - go to http://localhost:3000
 - visit Explore
+
+## workflow
+- `otelc pin` command will generate `otelc.instrumentation.go` file in both client and server depending on the packages used that needs to be instrumented
+- need to manually add our custom `library` into the generated `otelc.instrumentation.go`
+- when `otelc.instrumentation.go` is added to import our custom library, then otelc will not automatically instrument the application, thats why need to use the `otelc pin`.

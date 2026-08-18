@@ -33,12 +33,12 @@ docker compose up -d
 # terminal A
 cd server
 otelc go build .
-server.exe
+set "OTEL_SERVICE_NAME=mcp-server" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && server.exe
 
 # terminal B
 cd client
 otelc go build .
-client.exe
+set "OTEL_SERVICE_NAME=mcp-client" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && client.exe
 ```
 
 ## 3. View traces

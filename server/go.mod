@@ -27,7 +27,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -37,7 +37,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
@@ -77,7 +77,7 @@ require (
 	go.opentelemetry.io/otelc v1.0.1 // indirect
 	go.opentelemetry.io/otelc/instrumentation v0.0.0-00010101000000-000000000000 // indirect
 	go.opentelemetry.io/otelc/pkg v0.0.0 // indirect
-	go.opentelemetry.io/otelc/pkg/runtime v0.0.0-00010101000000-000000000000 // indirect
+	go.opentelemetry.io/otelc/pkg/runtime v0.0.0-20260818033640-f56d9588d11c // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/net v0.57.0 // indirect

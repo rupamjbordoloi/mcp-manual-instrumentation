@@ -6,8 +6,6 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	clienttrace "library/client"
 )
 
 // run contains only business logic. The mcp.session root span is injected
@@ -53,11 +51,13 @@ func main() {
 	// tracer provider on exit isn't something a compile-time hook can do
 	// for you, since it must run after run() returns, not around a single
 	// intercepted function call.
-	defer func() {
-		if err := clienttrace.Shutdown(context.Background()); err != nil {
-			log.Printf("otel shutdown error: %v", err)
-		}
-	}()
+	// defer func() {
+	// 	if err := clienttrace.Shutdown(context.Background()); err != nil {
+	// 		log.Printf("otel shutdown error: %v", err)
+	// 	} else {
+	// 		log.Println("Shutting down...")
+	// 	}
+	// }()
 
 	log.Println("Calling mcp server...")
 	if err := run(ctx); err != nil {

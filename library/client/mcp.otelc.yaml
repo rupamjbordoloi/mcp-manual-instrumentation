@@ -36,10 +36,16 @@ mcp_client_session_root_span:
   where:
     func: run
   do:
-    - inject_code:
-        raw: |
-          ctx, __mcpSessionSpan := otel.Tracer("mcp").Start(ctx, "mcp.session", trace.WithSpanKind(trace.SpanKindClient))
-          defer __mcpSessionSpan.End()
-        imports:
-          otel: "go.opentelemetry.io/otel"
-          trace: "go.opentelemetry.io/otel/trace"
+    - inject_hooks:
+        before: BeforeRun
+        after: AfterRun
+        path: "library/client"
+
+mcp_client_shutdown_on_exit:
+  target: main
+  where:
+    func: main
+  do:
+    - inject_hooks:
+        after: AfterMain
+        path: "library/client"

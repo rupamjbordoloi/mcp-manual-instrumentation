@@ -8,18 +8,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// run contains only business logic. The mcp.session root span is injected
-// into this function's body at compile time by the mcp_client_session_root_span
-// rule — there is no OTel import or call anywhere in this file.
+// run contains only business logic. Every span — mcp.session, mcp.initialize,
+// mcp.tools.call, mcp.deserialize_response, mcp.shutdown — is injected by
+// otelc rules targeting the mcp package and main.run. Zero OTel imports here.
 func run(ctx context.Context) error {
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-client", Version: "v1.0.0"}, nil)
 
 	transport := &mcp.StreamableClientTransport{
 		Endpoint: "http://localhost:8080/mcp",
-		// No manual otelhttp.NewTransport wrapping — otelc's built-in
-		// net/http/client instrumentation (blank-imported in
-		// otel.instrumentation.go) instruments the default transport
-		// automatically at compile time.
 	}
 
 	session, err := client.Connect(ctx, transport, nil)
@@ -36,7 +32,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	if res.IsError {
-		return http.ErrHandlerTimeout // placeholder; replace with your own sentinel if preferred
+		return http.ErrHandlerTimeout
 	}
 	for _, c := range res.Content {
 		log.Print(c.(*mcp.TextContent).Text)
@@ -44,23 +40,11 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+// main has zero OTel code — AfterMain flush, mcp.session root span, and all
+// protocol spans are injected entirely by otelc rules at compile time.
 func main() {
-	ctx := context.Background()
-
-	// The one composition line left in application code: flushing the
-	// tracer provider on exit isn't something a compile-time hook can do
-	// for you, since it must run after run() returns, not around a single
-	// intercepted function call.
-	// defer func() {
-	// 	if err := clienttrace.Shutdown(context.Background()); err != nil {
-	// 		log.Printf("otel shutdown error: %v", err)
-	// 	} else {
-	// 		log.Println("Shutting down...")
-	// 	}
-	// }()
-
 	log.Println("Calling mcp server...")
-	if err := run(ctx); err != nil {
-		log.Fatalf("run failed: %v", err)
+	if err := run(context.Background()); err != nil {
+		log.Printf("run failed: %v", err)
 	}
 }

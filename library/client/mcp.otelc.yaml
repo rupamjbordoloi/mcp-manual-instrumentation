@@ -1,3 +1,12 @@
+mcp_client_new_client:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: NewClient
+  do:
+    - inject_hooks:
+        after: AfterNewClient
+        path: "library/client"
+
 mcp_client_connect:
   target: github.com/modelcontextprotocol/go-sdk/mcp
   where:

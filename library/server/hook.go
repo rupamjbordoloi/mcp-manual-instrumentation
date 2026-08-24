@@ -1,19 +1,41 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"log"
-	"net/http"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otelc/pkg/hook"
+	"go.opentelemetry.io/otelc/pkg/runtime"
 )
+
+var (
+	logger   = runtime.Logger()
+	tracer   trace.Tracer
+	initOnce sync.Once
+)
+
+func initInstrumentation() {
+	initOnce.Do(func() {
+		tracer = otel.GetTracerProvider().Tracer(
+			instrumentationName,
+			trace.WithInstrumentationVersion(runtime.ModuleVersion()),
+		)
+		logger.Info("MCP server instrumentation initialized")
+	})
+}
+
+type mcpServerEnabler struct{}
+
+func (mcpServerEnabler) Enable() bool { return runtime.Instrumented(instrumentationKey) }
+
+var serverEnabler = mcpServerEnabler{}
 
 func finishSpan(span trace.Span, err error) {
 	if err != nil {
@@ -25,30 +47,42 @@ func finishSpan(span trace.Span, err error) {
 	span.End()
 }
 
-// ---- Tool handler wrapping ----
+// ---- Tool dispatch hook ----
 //
-// NOTE ON GENERALITY: the rule below matches by function name (mcp.otelc.yaml
-// lists "SayHi" explicitly), because a compile-time Function Hook Rule's
-// `func` selector requires an exact name — it cannot wildcard-match "any
-// function with this signature" the way WrapTool[In,Out] could at the Go
-// generics level. Adding tool.weather / tool.sql / etc. means adding one
-// more `where.func` entry to mcp.otelc.yaml per new handler function name —
-// not writing new tracing code, but not fully zero-touch either. This is a
-// real constraint of the rule engine as currently understood, not a
-// shortcut taken here.
+// Targets (*Server).callTool — the single internal dispatch point every
+// registered tool passes through, regardless of tool name. One rule covers
+// every current and future tool: the span name is built from
+// req.Params.Name at runtime, never hardcoded in YAML or Go.
+//
+// Param indices: recv=0, ctx=1, req=2
+// ctx is rewritten via SetParam(1, newCtx) — return value is discarded
+// by the trampoline, as confirmed from generated code earlier.
 
-func BeforeToolHandler(ictx hook.HookContext, ctx context.Context, req *mcp.CallToolRequest, input any) context.Context {
-	newCtx, span := tracer.Start(ctx, "tool."+ictx.GetFuncName(),
+func BeforeCallTool(ictx hook.HookContext, recv *mcp.Server, ctx context.Context, req *mcp.CallToolRequest) {
+	if !serverEnabler.Enable() {
+		return
+	}
+	initInstrumentation()
+
+	toolName := req.Params.Name
+	logger.Debug("BeforeCallTool called", "tool", toolName)
+
+	newCtx, span := tracer.Start(ctx, "tool."+toolName,
 		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("tool.name", ictx.GetFuncName())),
+		trace.WithAttributes(
+			attribute.String("tool.name", toolName),
+			attribute.String("rpc.system", "jsonrpc"),
+			attribute.String("rpc.method", "tools/call"),
+		),
 	)
-	ictx.SetKeyData("span", span)
-	return newCtx
+	ictx.SetData(map[string]any{"span": span})
+	ictx.SetParam(1, newCtx) // recv=0, ctx=1, req=2
 }
 
-func AfterToolHandler(ictx hook.HookContext, res *mcp.CallToolResult, output any, err error) {
+func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 	span, ok := ictx.GetKeyData("span").(trace.Span)
-	if !ok {
+	if !ok || span == nil {
+		logger.Debug("AfterCallTool: no span from before hook")
 		return
 	}
 	if err != nil {
@@ -59,149 +93,136 @@ func AfterToolHandler(ictx hook.HookContext, res *mcp.CallToolResult, output any
 		span.SetAttributes(attribute.Bool("tool.success", true))
 	}
 	finishSpan(span, err)
+	logger.Debug("AfterCallTool completed")
 }
 
-// ---- Protocol-level HTTP wrapping ----
-
-func AfterNewStreamableHTTPHandler(ictx hook.HookContext, h *mcp.StreamableHTTPHandler) {
-	// Wraps the handler in place is not possible here (the trampoline's
-	// SetReturnVal requires the exact declared return type, and this
-	// middleware needs to change concrete behavior, not just observe it).
-	// Instead this hook is a no-op placeholder — protocol-level HTTP
-	// middleware for jsonrpc.decode / mcp.dispatch / mcp.<method> spans is
-	// applied via one explicit composition line in main.go (see that file).
-	// This is the second necessary manual line in the whole client+server
-	// codebase, and exists for the same class of reason as the tracer
-	// provider Shutdown() call: Go's type system, not a tracing gap.
+// ---- Protocol middleware hook ----
+//
+// Targets (*Server).AddReceivingMiddleware. Fires once during NewServer
+// setup, installing our protocol-level spans into the SDK's own receiving
+// middleware chain — eliminates the ProtocolMiddleware wrapper in main.go.
+//
+// The middleware uses the concrete type mcp.MethodHandler[*mcp.ServerSession]
+// directly, since AddReceivingMiddleware on *Server takes exactly that type.
+// Using the generic form avoids the "cannot use func literal as mcp.MethodHandler"
+// error caused by trying to assign a plain func to a named/generic type.
+func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
+	if !serverEnabler.Enable() {
+		return
+	}
+	initInstrumentation()
+	logger.Debug("AfterNewServer: installing protocol middleware")
+	s.AddReceivingMiddleware(serverProtocolMiddleware)
 }
 
-// ProtocolMiddleware is exported so main.go can apply it with one line.
-// Internally it is unchanged from the manual-instrumentation version.
-func ProtocolMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("traceparent header:", r.Header.Get("traceparent"))
-		ctx := r.Context()
-
-		switch r.Method {
-		case http.MethodDelete:
-			ctx, span := tracer.Start(ctx, "mcp.shutdown", trace.WithSpanKind(trace.SpanKindServer))
-			serveSafely(w, r.WithContext(ctx), next, span, nil)
-			return
-		case http.MethodGet:
-			ctx, span := tracer.Start(ctx, "mcp.stream", trace.WithSpanKind(trace.SpanKindServer))
-			serveSafely(w, r.WithContext(ctx), next, span, nil)
-			return
+// serverProtocolMiddleware is the concrete middleware function with the exact
+// type signature AddReceivingMiddleware[*ServerSession] expects.
+// Declared as a named func rather than a closure so its type is
+// func(mcp.MethodHandler[*mcp.ServerSession]) mcp.MethodHandler[*mcp.ServerSession]
+// which the compiler can verify matches without a conversion.
+func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		// ... same body as before ...
+		if !serverEnabler.Enable() {
+			return next(ctx, method, req)
 		}
 
-		body, err := io.ReadAll(r.Body)
-		r.Body.Close()
-		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-
-		type rpcEnvelope struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id,omitempty"`
-			Method  string          `json:"method,omitempty"`
-		}
-		var env rpcEnvelope
-		ctx, decodeSpan := tracer.Start(ctx, "jsonrpc.decode", trace.WithSpanKind(trace.SpanKindInternal))
-		decodeErr := json.Unmarshal(body, &env)
-		if decodeErr == nil {
-			decodeSpan.SetAttributes(
+		// jsonrpc.decode already happened inside the SDK before middleware
+		// runs — record it as a zero-duration event span rather than a span
+		// with a fabricated duration.
+		ctx, decodeSpan := tracer.Start(ctx, "jsonrpc.decode",
+			trace.WithSpanKind(trace.SpanKindInternal),
+			trace.WithAttributes(
 				attribute.String("rpc.system", "jsonrpc"),
-				attribute.String("rpc.jsonrpc.version", env.JSONRPC),
-				attribute.String("rpc.method", env.Method),
-			)
-		}
-		finishSpan(decodeSpan, decodeErr)
-		r.Body = io.NopCloser(bytes.NewReader(body))
+				attribute.String("rpc.method", method),
+			),
+		)
+		decodeSpan.AddEvent("decoded")
+		finishSpan(decodeSpan, nil)
 
-		if protocolLevelMethods[env.Method] {
-			spanName, known := methodToSpanName[env.Method]
-			if !known {
-				spanName = "mcp." + env.Method
-			}
-			ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer),
-				trace.WithAttributes(attribute.String("rpc.method", env.Method)))
-			if env.Method == "initialize" {
-				span.AddEvent("protocol.validate")
-				span.AddEvent("capability.negotiation")
-			} else {
-				span.AddEvent("capability.enumeration")
-			}
-			serveSafely(w, r.WithContext(ctx), next, span, nil)
-			return
-		}
+		logger.Info("traceparent header:", "traceparent", req.GetExtra().Header.Get("traceparent"))
 
-		ctx, dispatchSpan := tracer.Start(ctx, "mcp.dispatch", trace.WithSpanKind(trace.SpanKindInternal))
-		spanName, known := methodToSpanName[env.Method]
-		if !known {
-			spanName = "mcp." + env.Method
-		}
-		ctx, methodSpan := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer),
-			trace.WithAttributes(attribute.String("rpc.method", env.Method)))
+		spanName := methodToSpanName(method)
+		ctx, dispatchSpan := tracer.Start(ctx, "mcp.dispatch",
+			trace.WithSpanKind(trace.SpanKindInternal),
+			trace.WithAttributes(attribute.String("rpc.method", method)),
+		)
 
-		if env.Method == "tools/call" {
-			var full struct {
-				Params json.RawMessage `json:"params"`
-			}
-			var params struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(body, &full) == nil && json.Unmarshal(full.Params, &params) == nil && params.Name != "" {
-				methodSpan.SetAttributes(attribute.String("mcp.tool.name", params.Name))
-			}
+		ctx, methodSpan := tracer.Start(ctx, spanName,
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(
+				attribute.String("rpc.system", "jsonrpc"),
+				attribute.String("rpc.method", method),
+			),
+		)
+
+		switch method {
+		case "initialize":
+			methodSpan.AddEvent("protocol.validate")
+			methodSpan.AddEvent("capability.negotiation")
+		case "server/discover":
+			methodSpan.AddEvent("capability.enumeration")
 		}
 
-		serveSafely(w, r.WithContext(ctx), next, methodSpan, dispatchSpan)
-	})
+		result, err := next(ctx, method, req)
+
+		finishSpan(dispatchSpan, err)
+
+		if err != nil {
+			// SetStatus only — BeforeCallTool/AfterCallTool already called
+			// RecordError on the inner tool span; recording it again here
+			// would duplicate the error event in Tempo without adding signal.
+			methodSpan.SetStatus(codes.Error, err.Error())
+		} else {
+			methodSpan.SetStatus(codes.Ok, "")
+		}
+		methodSpan.End()
+
+		_, encodeSpan := tracer.Start(ctx, "jsonrpc.encode",
+			trace.WithSpanKind(trace.SpanKindInternal),
+		)
+		finishSpan(encodeSpan, nil)
+
+		return result, err
+	}
 }
 
-func serveSafely(w http.ResponseWriter, r *http.Request, next http.Handler, primary trace.Span, dispatch trace.Span) {
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	defer func() {
-		if p := recover(); p != nil {
-			primary.SetStatus(codes.Error, "panic in handler")
-			primary.End()
-			if dispatch != nil {
-				dispatch.SetStatus(codes.Error, "panic in handler")
-				dispatch.End()
-			}
-			panic(p)
-		}
-	}()
-	next.ServeHTTP(rec, r)
-	var handlerErr error
-	if rec.status >= 400 {
-		handlerErr = httpStatusError(rec.status)
+func methodToSpanName(method string) string {
+	switch method {
+	case "initialize":
+		return "mcp.initialize"
+	case "server/discover":
+		return "mcp.discovery"
+	case "notifications/initialized":
+		return "mcp.initialized"
+	case "tools/list":
+		return "mcp.tools.list"
+	case "tools/call":
+		return "mcp.tools.execute"
+	case "prompts/get":
+		return "mcp.prompts.get"
+	case "resources/read":
+		return "mcp.resources.read"
+	default:
+		return "mcp." + method
 	}
-	if dispatch != nil {
-		finishSpan(dispatch, handlerErr)
+}
+
+// AfterMain flushes the active TracerProvider on process exit.
+type flushable interface {
+	ForceFlush(ctx context.Context) error
+}
+
+func AfterMain(ictx hook.HookContext) {
+	tp := otel.GetTracerProvider()
+	f, ok := tp.(flushable)
+	if !ok {
+		logger.Debug("active TracerProvider does not support ForceFlush")
+		return
 	}
-	if handlerErr != nil {
-		primary.SetStatus(codes.Error, handlerErr.Error())
+	if err := f.ForceFlush(context.Background()); err != nil {
+		logger.Debug("otel shutdown error", "error", err)
 	} else {
-		primary.SetStatus(codes.Ok, "")
-	}
-	primary.SetAttributes(attribute.Int("http.status_code", rec.status))
-	primary.End()
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) { r.status = code; r.ResponseWriter.WriteHeader(code) }
-func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+		logger.Info("MCP server instrumentation flushed")
 	}
 }
-
-type httpStatusErr struct{ status int }
-
-func (e httpStatusErr) Error() string  { return http.StatusText(e.status) }
-func httpStatusError(status int) error { return httpStatusErr{status: status} }

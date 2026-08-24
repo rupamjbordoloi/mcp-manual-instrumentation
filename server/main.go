@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	servertrace "library/server"
 )
 
 type Input struct {
@@ -23,9 +21,10 @@ type Output struct {
 	Greeting string `json:"greeting" jsonschema:"the greeting to tell to the user"`
 }
 
-// SayHi is pure business logic. tool.greet's span is injected around every
-// call to this function by the mcp_server_tool_greet rule — no OTel import
-// or call appears here.
+// SayHi is pure business logic — zero OTel code. tool.SayHi's span is
+// injected by the mcp_server_call_tool rule targeting (*Server).callTool,
+// which fires for every registered tool regardless of name. Adding
+// tool.weather, tool.sql, etc. requires no YAML or tracing changes at all.
 func SayHi(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 	*mcp.CallToolResult,
 	Output,
@@ -37,6 +36,9 @@ func SayHi(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 	return nil, Output{Greeting: "Hi " + input.Name}, nil
 }
 
+// main has zero OTel code — AfterMain flush and all protocol/tool spans are
+// injected by otelc rules. The only application-level concern here is the
+// HTTP server lifecycle and graceful shutdown.
 func main() {
 	log.Println("Starting server....")
 
@@ -46,15 +48,11 @@ func main() {
 		return server
 	}
 
-	// The one composition line that remains: wrapping the MCP handler with
-	// the JSON-RPC protocol middleware. See servertrace.hook.go's
-	// AfterNewStreamableHTTPHandler comment for why this can't be a
-	// fully transparent hook.
-	mcpHandler := servertrace.ProtocolMiddleware(mcp.NewStreamableHTTPHandler(getServer, nil))
+	// No ProtocolMiddleware wrapper here — protocol-level spans are now
+	// injected into the SDK's own receiving middleware chain via the
+	// AfterAddReceivingMiddleware hook. main.go has zero tracing references.
+	mcpHandler := mcp.NewStreamableHTTPHandler(getServer, nil)
 
-	// otelc's built-in net/http/server instrumentation (blank-imported in
-	// otel.instrumentation.go) instruments this mux automatically — no
-	// otelhttp.NewHandler call needed here.
 	mux := http.NewServeMux()
 	mux.Handle("POST /mcp", mcpHandler)
 	mux.Handle("GET /mcp", mcpHandler)
@@ -77,7 +75,4 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-	if err := servertrace.Shutdown(shutdownCtx); err != nil {
-		log.Printf("otel shutdown error: %v", err)
-	}
 }

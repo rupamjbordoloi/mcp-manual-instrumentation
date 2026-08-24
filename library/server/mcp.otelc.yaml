@@ -1,11 +1,28 @@
-mcp_server_tool_greet:
-  target: main
+mcp_server_call_tool:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
   where:
-    func: SayHi
-    signature_contains:
-      args: [context.Context]
+    func: callTool
+    recv: "*Server"
   do:
     - inject_hooks:
-        before: BeforeToolHandler
-        after: AfterToolHandler
+        before: BeforeCallTool
+        after: AfterCallTool
+        path: "library/server"
+
+mcp_server_new_server:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: NewServer
+  do:
+    - inject_hooks:
+        after: AfterNewServer
+        path: "library/server"
+
+mcp_server_shutdown_on_exit:
+  target: main
+  where:
+    func: main
+  do:
+    - inject_hooks:
+        after: AfterMain
         path: "library/server"

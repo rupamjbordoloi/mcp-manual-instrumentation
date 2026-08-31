@@ -44,23 +44,23 @@ func run(ctx context.Context) error {
 	}
 
 	// ---------------------------
-	for _, c := range res.Content {
-		log.Print(c.(*mcp.TextContent).Text)
-	}
+	// for _, c := range res.Content {
+	// 	log.Print(c.(*mcp.TextContent).Text)
+	// }
 
-	res, err = session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "bye",
-		Arguments: map[string]any{"name": "HDFC"},
-	})
-	if err != nil {
-		return err
-	}
-	if res.IsError {
-		return http.ErrHandlerTimeout
-	}
-	for _, c := range res.Content {
-		log.Print(c.(*mcp.TextContent).Text)
-	}
+	// res, err = session.CallTool(ctx, &mcp.CallToolParams{
+	// 	Name:      "bye",
+	// 	Arguments: map[string]any{"name": "HDFC"},
+	// })
+	// if err != nil {
+	// 	return err
+	// }
+	// if res.IsError {
+	// 	return http.ErrHandlerTimeout
+	// }
+	// for _, c := range res.Content {
+	// 	log.Print(c.(*mcp.TextContent).Text)
+	// }
 	return nil
 }
 

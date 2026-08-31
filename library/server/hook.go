@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otelc/pkg/hook"
 	"go.opentelemetry.io/otelc/pkg/runtime"
@@ -127,24 +128,41 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			return next(ctx, method, req)
 		}
 
-		// Skip notification methods — they are server-side no-ops with no
-		// measurable work. The client side already records these operations.
-		// Skipping eliminates the 0µs mcp.initialized sibling from Tempo.
+		initInstrumentation()
+
 		if isNotification(method) {
 			return next(ctx, method, req)
 		}
 
-		// ctx := r.Context()
+		// IMPORTANT:
+		// In stateful StreamableHTTP, ctx can belong to the persistent
+		// MCP session rather than the current HTTP POST.
+		//
+		// Recover the current HTTP server span from the request metadata
+		// injected by BeforeStreamableHTTP.
+		if extra := req.GetExtra(); extra != nil && extra.Header != nil {
+			if traceparent := extra.Header.Get(httpSpanContextHeader); traceparent != "" {
+				carrier := propagation.MapCarrier{
+					"traceparent": traceparent,
+				}
 
-		// ctx = otel.GetTextMapPropagator().Extract(
-		// 	ctx,
-		// 	propagation.HeaderCarrier(req.GetExtra().Header),
-		// )
-		// logger.Info("serverProtocolMiddleware", "serverProtocolMiddleware", method)
-		// logger.Info("--->>trace-parent", "Traceparent", req.GetExtra().Header.Get("Traceparent"))
+				ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+				// The span was created locally by net/http instrumentation,
+				// so don't mark it as a remote parent.
+				if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+					ctx = trace.ContextWithSpanContext(
+						ctx,
+						sc.WithRemote(false),
+					)
+				}
+			}
+		}
+
 		spanName := methodToSpanName(method)
-		// PrintParentSpan(ctx)
+
 		sc := trace.SpanContextFromContext(ctx)
+
 		fmt.Printf(
 			"\n=== MCP METHOD ===\n"+
 				"method: %s\n"+
@@ -159,7 +177,9 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			sc.IsValid(),
 		)
 
-		ctx, methodSpan := tracer.Start(ctx, spanName,
+		ctx, methodSpan := tracer.Start(
+			ctx,
+			spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
 				attribute.String("rpc.system", "jsonrpc"),
@@ -167,20 +187,17 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			),
 		)
 
-		child := methodSpan.SpanContext()
-
 		fmt.Printf(
-			"created span: %s\n"+
-				"span_id: %s\n",
-			methodToSpanName(method),
-			child.SpanID(),
+			"created span: %s\nspan_id: %s\n",
+			spanName,
+			methodSpan.SpanContext().SpanID(),
 		)
-		// logger.Info("method span creting", spanName, methodSpan.SpanContext().SpanID())
 
 		switch method {
 		case "initialize":
 			methodSpan.AddEvent("protocol.validate")
 			methodSpan.AddEvent("capability.negotiation")
+
 		case "server/discover":
 			methodSpan.AddEvent("capability.enumeration")
 		}
@@ -188,12 +205,13 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		result, err := next(ctx, method, req)
 
 		if err != nil {
+			methodSpan.RecordError(err)
 			methodSpan.SetStatus(codes.Error, err.Error())
 		} else {
 			methodSpan.SetStatus(codes.Ok, "")
 		}
+
 		methodSpan.End()
-		fmt.Println("-->>>ending ", method)
 
 		return result, err
 	}
@@ -285,4 +303,48 @@ func SpanMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		}
 	})
+}
+
+func BeforeStreamableHTTP(
+	ictx hook.HookContext,
+	recv *mcp.StreamableServerTransport,
+	w http.ResponseWriter,
+	req *http.Request,
+) {
+	if !serverEnabler.Enable() {
+		return
+	}
+
+	initInstrumentation()
+
+	// Only bridge POST request context.
+	if req.Method != http.MethodPost {
+		return
+	}
+
+	// This is the context created by net/http server auto-instrumentation.
+	httpCtx := req.Context()
+
+	sc := trace.SpanContextFromContext(httpCtx)
+	if !sc.IsValid() {
+		logger.Info("BeforeStreamableHTTP: no valid HTTP server span")
+		return
+	}
+
+	// Serialize the CURRENT HTTP server span context into a private
+	// request header. This header is later copied by the MCP SDK into
+	// RequestExtra.Header for every JSON-RPC request.
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(httpCtx, carrier)
+
+	traceparent := carrier.Get("traceparent")
+	if traceparent == "" {
+		return
+	}
+
+	req.Header.Set(httpSpanContextHeader, traceparent)
+
+	// Keep the request context unchanged. The important part is the
+	// per-HTTP-request span context stored in RequestExtra.Header.
+	ictx.SetParam(1, req)
 }

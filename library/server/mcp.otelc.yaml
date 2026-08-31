@@ -18,6 +18,16 @@ mcp_server_new_server:
         after: AfterNewServer
         path: "library/server"
 
+mcp_server_streamable_http:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: ServeHTTP
+    recv: "*StreamableServerTransport"
+  do:
+    - inject_hooks:
+        before: BeforeStreamableHTTP
+        path: "library/server"
+
 mcp_server_shutdown_on_exit:
   target: main
   where:

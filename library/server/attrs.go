@@ -6,6 +6,7 @@ const (
 	instrumentationName = "go.opentelemetry.io/otelc/instrumentation/mcp/server"
 	instrumentationKey  = "MCP_SERVER"
 )
+const httpSpanContextHeader = "X-OTel-MCP-HTTP-Span"
 
 // var methodToSpanName = map[string]string{
 // 	"notifications/initialized": "mcp.initialized",

@@ -284,27 +284,6 @@ func PrintParentSpan(ctx context.Context) {
 	}
 }
 
-func SpanMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, methodSpan := tracer.Start(r.Context(), "method",
-				trace.WithSpanKind(trace.SpanKindServer),
-				trace.WithAttributes(
-					attribute.String("rpc.system", "jsonrpc"),
-					attribute.String("rpc.method", "method"),
-				),
-			)
-			next.ServeHTTP(w, r)
-
-			methodSpan.End()
-			fmt.Println("-->>>ending ", "method")
-		} else {
-
-			next.ServeHTTP(w, r)
-		}
-	})
-}
-
 func BeforeStreamableHTTP(
 	ictx hook.HookContext,
 	recv *mcp.StreamableServerTransport,

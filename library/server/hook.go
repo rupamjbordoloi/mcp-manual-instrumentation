@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,18 +47,10 @@ func finishSpan(span trace.Span, err error) {
 		span.SetStatus(codes.Ok, "")
 	}
 	span.End()
+	fmt.Println("ending span", span.SpanContext().SpanID())
 }
 
 // ---- Tool dispatch hook ----
-//
-// Targets (*Server).callTool — the single internal dispatch point every
-// registered tool passes through, regardless of tool name. One rule covers
-// every current and future tool: the span name is built from
-// req.Params.Name at runtime, never hardcoded in YAML or Go.
-//
-// Param indices: recv=0, ctx=1, req=2
-// ctx is rewritten via SetParam(1, newCtx) — return value is discarded
-// by the trampoline, as confirmed from generated code earlier.
 
 func BeforeCallTool(ictx hook.HookContext, recv *mcp.Server, ctx context.Context, req *mcp.CallToolRequest) {
 	if !serverEnabler.Enable() {
@@ -65,8 +59,8 @@ func BeforeCallTool(ictx hook.HookContext, recv *mcp.Server, ctx context.Context
 	initInstrumentation()
 
 	toolName := req.Params.Name
-	logger.Debug("BeforeCallTool called", "tool", toolName)
-
+	logger.Info("------------------->>>BeforeCallTool called", "tool", toolName)
+	PrintParentSpan(ctx)
 	newCtx, span := tracer.Start(ctx, "tool."+toolName,
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
@@ -76,13 +70,14 @@ func BeforeCallTool(ictx hook.HookContext, recv *mcp.Server, ctx context.Context
 		),
 	)
 	ictx.SetData(map[string]any{"span": span})
-	ictx.SetParam(1, newCtx) // recv=0, ctx=1, req=2
+	ictx.SetParam(1, newCtx)
+	fmt.Println("creating span", "tool"+toolName, "id", span.SpanContext().SpanID())
 }
 
 func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 	span, ok := ictx.GetKeyData("span").(trace.Span)
 	if !ok || span == nil {
-		logger.Debug("AfterCallTool: no span from before hook")
+		logger.Info("AfterCallTool: no span from before hook")
 		return
 	}
 	if err != nil {
@@ -93,59 +88,75 @@ func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 		span.SetAttributes(attribute.Bool("tool.success", true))
 	}
 	finishSpan(span, err)
-	logger.Debug("AfterCallTool completed")
+	logger.Info("AfterCallTool completed")
 }
 
-// ---- Protocol middleware hook ----
-//
-// Targets (*Server).AddReceivingMiddleware. Fires once during NewServer
-// setup, installing our protocol-level spans into the SDK's own receiving
-// middleware chain — eliminates the ProtocolMiddleware wrapper in main.go.
-//
-// The middleware uses the concrete type mcp.MethodHandler[*mcp.ServerSession]
-// directly, since AddReceivingMiddleware on *Server takes exactly that type.
-// Using the generic form avoids the "cannot use func literal as mcp.MethodHandler"
-// error caused by trying to assign a plain func to a named/generic type.
+// ---- Protocol middleware ----
+
 func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 	if !serverEnabler.Enable() {
 		return
 	}
 	initInstrumentation()
-	logger.Debug("AfterNewServer: installing protocol middleware")
+	logger.Info("AfterNewServer: installing protocol middleware")
 	s.AddReceivingMiddleware(serverProtocolMiddleware)
 }
 
-// serverProtocolMiddleware is the concrete middleware function with the exact
-// type signature AddReceivingMiddleware[*ServerSession] expects.
-// Declared as a named func rather than a closure so its type is
-// func(mcp.MethodHandler[*mcp.ServerSession]) mcp.MethodHandler[*mcp.ServerSession]
-// which the compiler can verify matches without a conversion.
+// serverProtocolMiddleware creates one span per meaningful inbound MCP method.
+//
+// Skipped methods (no span created):
+//
+//   - notifications/initialized: this is a client acknowledgment notification.
+//     It is 0µs on the server (no server-side work), and the client-side
+//     mcp.notifications/initialized span already records the operation with
+//     full context. Creating a server-side span adds visual noise with no value.
+//
+//   - notifications/* in general: notifications are fire-and-forget; the server
+//     does no meaningful work that needs its own span.
+//
+// The MCP SDK (StreamableHTTPHandler with stateless per-request getServer) may
+// process multiple JSON-RPC messages within one HTTP request — for example,
+// initialize + initialized + tools/call can arrive in the same HTTP connection.
+// When this happens, each method still gets its own span correctly parented to
+// the HTTP server span (extracted from traceparent by net/http/server auto-
+// instrumentation). The visual grouping under one HTTP POST in Tempo reflects
+// the actual protocol behavior, not a bug in this instrumentation.
 func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-		// ... same body as before ...
 		if !serverEnabler.Enable() {
 			return next(ctx, method, req)
 		}
 
-		// jsonrpc.decode already happened inside the SDK before middleware
-		// runs — record it as a zero-duration event span rather than a span
-		// with a fabricated duration.
-		ctx, decodeSpan := tracer.Start(ctx, "jsonrpc.decode",
-			trace.WithSpanKind(trace.SpanKindInternal),
-			trace.WithAttributes(
-				attribute.String("rpc.system", "jsonrpc"),
-				attribute.String("rpc.method", method),
-			),
-		)
-		decodeSpan.AddEvent("decoded")
-		finishSpan(decodeSpan, nil)
+		// Skip notification methods — they are server-side no-ops with no
+		// measurable work. The client side already records these operations.
+		// Skipping eliminates the 0µs mcp.initialized sibling from Tempo.
+		if isNotification(method) {
+			return next(ctx, method, req)
+		}
 
-		logger.Info("traceparent header:", "traceparent", req.GetExtra().Header.Get("traceparent"))
+		// ctx := r.Context()
 
+		// ctx = otel.GetTextMapPropagator().Extract(
+		// 	ctx,
+		// 	propagation.HeaderCarrier(req.GetExtra().Header),
+		// )
+		// logger.Info("serverProtocolMiddleware", "serverProtocolMiddleware", method)
+		// logger.Info("--->>trace-parent", "Traceparent", req.GetExtra().Header.Get("Traceparent"))
 		spanName := methodToSpanName(method)
-		ctx, dispatchSpan := tracer.Start(ctx, "mcp.dispatch",
-			trace.WithSpanKind(trace.SpanKindInternal),
-			trace.WithAttributes(attribute.String("rpc.method", method)),
+		// PrintParentSpan(ctx)
+		sc := trace.SpanContextFromContext(ctx)
+		fmt.Printf(
+			"\n=== MCP METHOD ===\n"+
+				"method: %s\n"+
+				"trace_id: %s\n"+
+				"parent_span_id: %s\n"+
+				"remote: %v\n"+
+				"valid: %v\n",
+			method,
+			sc.TraceID(),
+			sc.SpanID(),
+			sc.IsRemote(),
+			sc.IsValid(),
 		)
 
 		ctx, methodSpan := tracer.Start(ctx, spanName,
@@ -155,6 +166,16 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 				attribute.String("rpc.method", method),
 			),
 		)
+
+		child := methodSpan.SpanContext()
+
+		fmt.Printf(
+			"created span: %s\n"+
+				"span_id: %s\n",
+			methodToSpanName(method),
+			child.SpanID(),
+		)
+		// logger.Info("method span creting", spanName, methodSpan.SpanContext().SpanID())
 
 		switch method {
 		case "initialize":
@@ -166,35 +187,38 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 
 		result, err := next(ctx, method, req)
 
-		finishSpan(dispatchSpan, err)
-
 		if err != nil {
-			// SetStatus only — BeforeCallTool/AfterCallTool already called
-			// RecordError on the inner tool span; recording it again here
-			// would duplicate the error event in Tempo without adding signal.
 			methodSpan.SetStatus(codes.Error, err.Error())
 		} else {
 			methodSpan.SetStatus(codes.Ok, "")
 		}
 		methodSpan.End()
-
-		_, encodeSpan := tracer.Start(ctx, "jsonrpc.encode",
-			trace.WithSpanKind(trace.SpanKindInternal),
-		)
-		finishSpan(encodeSpan, nil)
+		fmt.Println("-->>>ending ", method)
 
 		return result, err
 	}
 }
 
+// isNotification reports whether the given JSON-RPC method is a one-way
+// notification (no response expected, no server-side work to measure).
+func isNotification(method string) bool {
+	switch method {
+	case "notifications/initialized",
+		"notifications/roots/list_changed",
+		"notifications/progress",
+		"notifications/cancelled":
+		return true
+	}
+	return false
+}
+
 func methodToSpanName(method string) string {
+	logger.Info("debug", "method", method)
 	switch method {
 	case "initialize":
 		return "mcp.initialize"
 	case "server/discover":
 		return "mcp.discovery"
-	case "notifications/initialized":
-		return "mcp.initialized"
 	case "tools/list":
 		return "mcp.tools.list"
 	case "tools/call":
@@ -217,12 +241,48 @@ func AfterMain(ictx hook.HookContext) {
 	tp := otel.GetTracerProvider()
 	f, ok := tp.(flushable)
 	if !ok {
-		logger.Debug("active TracerProvider does not support ForceFlush")
+		logger.Info("active TracerProvider does not support ForceFlush")
 		return
 	}
 	if err := f.ForceFlush(context.Background()); err != nil {
-		logger.Debug("otel shutdown error", "error", err)
+		logger.Info("otel shutdown error", "error", err)
 	} else {
 		logger.Info("MCP server instrumentation flushed")
 	}
+}
+
+func PrintParentSpan(ctx context.Context) {
+	spanContext := trace.SpanContextFromContext(ctx)
+
+	// 2. Validate and read the SpanID (which acts as the Parent Span ID)
+	if spanContext.IsValid() {
+		parentSpanID := spanContext.SpanID().String()
+		traceID := spanContext.TraceID().String()
+
+		fmt.Printf("Parent Span ID: %s\n", parentSpanID)
+		fmt.Printf("Trace ID: %s\n", traceID)
+	} else {
+		fmt.Println("No valid parent span found in the context (this will be a root span).")
+	}
+}
+
+func SpanMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, methodSpan := tracer.Start(r.Context(), "method",
+				trace.WithSpanKind(trace.SpanKindServer),
+				trace.WithAttributes(
+					attribute.String("rpc.system", "jsonrpc"),
+					attribute.String("rpc.method", "method"),
+				),
+			)
+			next.ServeHTTP(w, r)
+
+			methodSpan.End()
+			fmt.Println("-->>>ending ", "method")
+		} else {
+
+			next.ServeHTTP(w, r)
+		}
+	})
 }

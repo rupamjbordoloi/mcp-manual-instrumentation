@@ -8,14 +8,17 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// run contains only business logic. Every span — mcp.session, mcp.initialize,
-// mcp.tools.call, mcp.deserialize_response, mcp.shutdown — is injected by
-// otelc rules targeting the mcp package and main.run. Zero OTel imports here.
+// run contains only business logic.
+// mcp.session starts inside (*Client).Connect (BeforeConnect hook).
+// mcp.initialize ends inside (*Client).Connect (AfterConnect hook).
+// mcp.tools.call wraps (*ClientSession).CallTool (BeforeCallTool/AfterCallTool hooks).
+// mcp.shutdown and mcp.session end inside (*ClientSession).Close (BeforeClose/AfterClose hooks).
+// Zero OTel imports or calls anywhere in this file.
 func run(ctx context.Context) error {
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-client", Version: "v1.0.0"}, nil)
 
 	transport := &mcp.StreamableClientTransport{
-		Endpoint: "http://localhost:8080/mcp",
+		Endpoint: "http://localhost:8080",
 	}
 
 	session, err := client.Connect(ctx, transport, nil)
@@ -40,8 +43,6 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// main has zero OTel code — AfterMain flush, mcp.session root span, and all
-// protocol spans are injected entirely by otelc rules at compile time.
 func main() {
 	log.Println("Calling mcp server...")
 	if err := run(context.Background()); err != nil {

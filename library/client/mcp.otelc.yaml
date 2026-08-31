@@ -18,17 +18,6 @@ mcp_client_connect:
         after: AfterConnect
         path: "library/client"
 
-mcp_client_call_tool:
-  target: github.com/modelcontextprotocol/go-sdk/mcp
-  where:
-    func: CallTool
-    recv: "*ClientSession"
-  do:
-    - inject_hooks:
-        before: BeforeCallTool
-        after: AfterCallTool
-        path: "library/client"
-
 mcp_client_close:
   target: github.com/modelcontextprotocol/go-sdk/mcp
   where:
@@ -38,16 +27,6 @@ mcp_client_close:
     - inject_hooks:
         before: BeforeClose
         after: AfterClose
-        path: "library/client"
-
-mcp_client_session_root_span:
-  target: main
-  where:
-    func: run
-  do:
-    - inject_hooks:
-        before: BeforeRun
-        after: AfterRun
         path: "library/client"
 
 mcp_client_shutdown_on_exit:

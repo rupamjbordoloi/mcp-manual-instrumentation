@@ -27,12 +27,3 @@ mcp_server_streamable_http:
     - inject_hooks:
         before: BeforeStreamableHTTP
         path: "library/server"
-
-mcp_server_shutdown_on_exit:
-  target: main
-  where:
-    func: main
-  do:
-    - inject_hooks:
-        after: AfterMain
-        path: "library/server"

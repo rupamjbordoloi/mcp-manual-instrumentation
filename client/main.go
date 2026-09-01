@@ -8,10 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func runHi(session *mcp.ClientSession) {
-
-}
-
 // run contains only business logic.
 // mcp.session starts inside (*Client).Connect (BeforeConnect hook).
 // mcp.initialize ends inside (*Client).Connect (AfterConnect hook).
@@ -43,24 +39,6 @@ func run(ctx context.Context) error {
 		return http.ErrHandlerTimeout
 	}
 
-	// ---------------------------
-	// for _, c := range res.Content {
-	// 	log.Print(c.(*mcp.TextContent).Text)
-	// }
-
-	// res, err = session.CallTool(ctx, &mcp.CallToolParams{
-	// 	Name:      "bye",
-	// 	Arguments: map[string]any{"name": "HDFC"},
-	// })
-	// if err != nil {
-	// 	return err
-	// }
-	// if res.IsError {
-	// 	return http.ErrHandlerTimeout
-	// }
-	// for _, c := range res.Content {
-	// 	log.Print(c.(*mcp.TextContent).Text)
-	// }
 	return nil
 }
 

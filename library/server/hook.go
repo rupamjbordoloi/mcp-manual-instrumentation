@@ -4,7 +4,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 
@@ -48,7 +47,7 @@ func finishSpan(span trace.Span, err error) {
 		span.SetStatus(codes.Ok, "")
 	}
 	span.End()
-	fmt.Println("ending span", span.SpanContext().SpanID())
+	logger.Debug("finishSpan", "finishSpan", span.SpanContext().SpanID())
 }
 
 // ---- Tool dispatch hook ----
@@ -60,25 +59,25 @@ func BeforeCallTool(ictx hook.HookContext, recv *mcp.Server, ctx context.Context
 	initInstrumentation()
 
 	toolName := req.Params.Name
-	logger.Info("------------------->>>BeforeCallTool called", "tool", toolName)
+	logger.Debug("BeforeCallTool called", "tool", toolName)
 	PrintParentSpan(ctx)
 	newCtx, span := tracer.Start(ctx, "tool."+toolName,
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("tool.name", toolName),
-			attribute.String("rpc.system", "jsonrpc"),
+			attribute.String("rpc.system.name", "jsonrpc"),
 			attribute.String("rpc.method", "tools/call"),
 		),
 	)
 	ictx.SetData(map[string]any{"span": span})
 	ictx.SetParam(1, newCtx)
-	fmt.Println("creating span", "tool"+toolName, "id", span.SpanContext().SpanID())
+	logger.Debug("BeforeCallTool", "creating span", "tool"+toolName, "id", span.SpanContext().SpanID())
 }
 
 func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 	span, ok := ictx.GetKeyData("span").(trace.Span)
 	if !ok || span == nil {
-		logger.Info("AfterCallTool: no span from before hook")
+		logger.Debug("AfterCallTool: no span from before hook")
 		return
 	}
 	if err != nil {
@@ -89,7 +88,7 @@ func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 		span.SetAttributes(attribute.Bool("tool.success", true))
 	}
 	finishSpan(span, err)
-	logger.Info("AfterCallTool completed")
+	logger.Debug("AfterCallTool completed")
 }
 
 // ---- Protocol middleware ----
@@ -99,7 +98,7 @@ func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 		return
 	}
 	initInstrumentation()
-	logger.Info("AfterNewServer: installing protocol middleware")
+	logger.Debug("AfterNewServer: installing protocol middleware")
 	s.AddReceivingMiddleware(serverProtocolMiddleware)
 }
 
@@ -161,35 +160,22 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 
 		spanName := methodToSpanName(method)
 
-		sc := trace.SpanContextFromContext(ctx)
-
-		fmt.Printf(
-			"\n=== MCP METHOD ===\n"+
-				"method: %s\n"+
-				"trace_id: %s\n"+
-				"parent_span_id: %s\n"+
-				"remote: %v\n"+
-				"valid: %v\n",
-			method,
-			sc.TraceID(),
-			sc.SpanID(),
-			sc.IsRemote(),
-			sc.IsValid(),
-		)
-
 		ctx, methodSpan := tracer.Start(
 			ctx,
 			spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
-				attribute.String("rpc.system", "jsonrpc"),
+				attribute.String("rpc.system.name", "jsonrpc"),
 				attribute.String("rpc.method", method),
+				attribute.String("mcp.tool.name", method),
 			),
 		)
 
-		fmt.Printf(
-			"created span: %s\nspan_id: %s\n",
+		logger.Debug(
+			"serverProtocolMiddleware",
+			"created span",
 			spanName,
+			"span_id",
 			methodSpan.SpanContext().SpanID(),
 		)
 
@@ -231,7 +217,7 @@ func isNotification(method string) bool {
 }
 
 func methodToSpanName(method string) string {
-	logger.Info("debug", "method", method)
+	logger.Debug("debug", "method", method)
 	switch method {
 	case "initialize":
 		return "mcp.initialize"
@@ -250,25 +236,6 @@ func methodToSpanName(method string) string {
 	}
 }
 
-// AfterMain flushes the active TracerProvider on process exit.
-type flushable interface {
-	ForceFlush(ctx context.Context) error
-}
-
-func AfterMain(ictx hook.HookContext) {
-	tp := otel.GetTracerProvider()
-	f, ok := tp.(flushable)
-	if !ok {
-		logger.Info("active TracerProvider does not support ForceFlush")
-		return
-	}
-	if err := f.ForceFlush(context.Background()); err != nil {
-		logger.Info("otel shutdown error", "error", err)
-	} else {
-		logger.Info("MCP server instrumentation flushed")
-	}
-}
-
 func PrintParentSpan(ctx context.Context) {
 	spanContext := trace.SpanContextFromContext(ctx)
 
@@ -277,10 +244,10 @@ func PrintParentSpan(ctx context.Context) {
 		parentSpanID := spanContext.SpanID().String()
 		traceID := spanContext.TraceID().String()
 
-		fmt.Printf("Parent Span ID: %s\n", parentSpanID)
-		fmt.Printf("Trace ID: %s\n", traceID)
+		logger.Debug("PrintParentSpan", "Parent Span ID", parentSpanID)
+		logger.Debug("PrintParentSpan", "Trace ID", traceID)
 	} else {
-		fmt.Println("No valid parent span found in the context (this will be a root span).")
+		logger.Debug("No valid parent span found in the context (this will be a root span).")
 	}
 }
 
@@ -306,7 +273,7 @@ func BeforeStreamableHTTP(
 
 	sc := trace.SpanContextFromContext(httpCtx)
 	if !sc.IsValid() {
-		logger.Info("BeforeStreamableHTTP: no valid HTTP server span")
+		logger.Debug("BeforeStreamableHTTP: no valid HTTP server span")
 		return
 	}
 

@@ -4,8 +4,8 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
@@ -58,12 +58,12 @@ func finishSpan(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		fmt.Println("error", err)
+		logger.Debug("finishSpan", "error", err)
 	} else {
 		span.SetStatus(codes.Ok, "")
 	}
 	span.End()
-	fmt.Println("ending", span.SpanContext().SpanID())
+	logger.Debug("finishSpan", "ending", span.SpanContext().SpanID())
 }
 
 // ---- NewClient hook ----
@@ -112,7 +112,7 @@ func clientProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		ctx, methodSpan := tracer.Start(ctx, spanName,
 			trace.WithSpanKind(trace.SpanKindClient),
 			trace.WithAttributes(
-				attribute.String("rpc.system", "jsonrpc"),
+				attribute.String("rpc.system.name", "jsonrpc"),
 				attribute.String("rpc.method", method),
 			),
 		)
@@ -139,7 +139,7 @@ func clientProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			methodSpan.SetStatus(codes.Ok, "")
 		}
 		methodSpan.End()
-		fmt.Println("ending", method)
+		logger.Debug("clientProtocolMiddleware", "ending", method)
 
 		return result, err
 	}
@@ -266,22 +266,13 @@ func AfterClose(ictx hook.HookContext, err error) {
 	}
 }
 
-// ---- Process exit flush ----
-
-type flushable interface {
-	ForceFlush(ctx context.Context) error
-}
-
 func AfterMain(ictx hook.HookContext) {
-	tp := otel.GetTracerProvider()
-	f, ok := tp.(flushable)
-	if !ok {
-		logger.Debug("active TracerProvider does not support ForceFlush")
-		return
-	}
-	if err := f.ForceFlush(context.Background()); err != nil {
-		logger.Debug("otel shutdown error", "error", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := runtime.Shutdown(ctx); err != nil {
+		logger.Error("error flushing telemetry during shutdown", "error", err)
 	} else {
-		logger.Info("MCP client instrumentation flushed")
+		logger.Info("OpenTelemetry SDK shutdown completed successfully")
 	}
 }

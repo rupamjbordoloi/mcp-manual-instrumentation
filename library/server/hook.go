@@ -729,7 +729,7 @@ func BeforeStreamableHTTP(
 	// The important part is the per-HTTP-request span context stored in
 	// RequestExtra.Header.
 	ictx.SetParam(
-		1,
+		2,
 		req,
 	)
 

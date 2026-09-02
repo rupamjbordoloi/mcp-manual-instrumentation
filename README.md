@@ -25,6 +25,12 @@ code, same as before.
 docker compose up -d
 ```
 
+## 2. Install otelc
+```bash
+go install go.opentelemetry.io/otelc/tool/cmd/otelc@latest
+```
+This places the otelc binary in your Go bin directory ($(go env GOPATH)/bin by default). The following steps assume otelc is on your PATH. If not then please add it to the path
+
 ## 2. Build normally through otelc — no --rules flag needed
 
 ```bash

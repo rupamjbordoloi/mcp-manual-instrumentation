@@ -6,15 +6,11 @@ replace library => ../library
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/trace v0.0.0-00010101000000-000000000000
-	go.opentelemetry.io/otelc/instrumentation/google.golang.org/grpc/client v0.0.0-00010101000000-000000000000
-	go.opentelemetry.io/otelc/instrumentation/google.golang.org/grpc/server v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/log v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/log/slog v0.0.0-00010101000000-000000000000
-	go.opentelemetry.io/otelc/instrumentation/net/http/client v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/net/http/server v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/runtime v0.0.0-00010101000000-000000000000
 	library v0.0.0-00010101000000-000000000000
@@ -27,7 +23,6 @@ require (
 	github.com/urfave/cli/v3 v3.10.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -37,7 +32,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect

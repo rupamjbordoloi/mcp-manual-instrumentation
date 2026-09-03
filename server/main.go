@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 type Input struct {
@@ -83,10 +85,23 @@ func runServer(url string) {
 		// &mcp.StreamableHTTPOptions{Stateless: true},
 	)
 
-	srv := &http.Server{Addr: url, Handler: mcpHandler}
+	// TEMPORARY: manual wrap for validation. Once confirmed working, this
+	// wrap moves into a wrap_call otelc rule so it's applied automatically
+	// at build time and this line goes away.
+	//
+	// WithTracerProvider(noop...) disables otelhttp's own span creation —
+	// traces already come from the existing net/http/server otelc hook, so
+	// this wrap is metrics-only and won't create duplicate/nested spans.
+	instrumentedHandler := otelhttp.NewHandler(
+		mcpHandler,
+		"mcp",
+		otelhttp.WithTracerProvider(noop.NewTracerProvider()),
+	)
+
+	srv := &http.Server{Addr: url, Handler: instrumentedHandler}
 
 	go func() {
-		log.Println("MCP server listening on :8080/mcp")
+		log.Println("MCP server listening on :8080")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}

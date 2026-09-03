@@ -64,7 +64,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/otelc v1.0.1 // indirect
-	go.opentelemetry.io/otelc/instrumentation v0.0.0-00010101000000-000000000000 // indirect
+	go.opentelemetry.io/otelc/instrumentation v0.0.0-20260901125634-e5bb5fece2b2 // indirect
 	go.opentelemetry.io/otelc/pkg v0.0.0 // indirect
 	go.opentelemetry.io/otelc/pkg/runtime v0.0.0-20260818033640-f56d9588d11c // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect

@@ -1,5 +1,8 @@
 services:
-# otel-collector-debug:
+  # Uncomment for a second, separately-configured collector instance for
+  # ad-hoc debugging (e.g. with the "debug" exporter enabled) without
+  # touching the main collector's config. Not required for normal operation.
+  # otel-collector-debug:
   #   image: otel/opentelemetry-collector-contrib:latest
   #   command: ["--config=/etc/otel-collector-config.yaml"]
   #   volumes:
@@ -7,12 +10,13 @@ services:
   #   ports:
   #     - "4317:4317"
   #     - "4318:4318"
-  
+
   # OpenTelemetry Collector
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.141.0@sha256:b14234c4bc1b7364629af272e564913bb57bdc9736d45b8b6db5ab3417dc75f9
 
     container_name: otel-collector
+    restart: unless-stopped
 
     command:
       - "--config=/etc/otelcol-contrib/config.yaml"
@@ -22,12 +26,11 @@ services:
     ports:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
-      - "8889:8889"
+      - "8889:8889" # Prometheus exporter (scraped by the prometheus service)
 
     depends_on:
       - tempo
-      # - loki 
-
+      # - loki
 
   # Prometheus Backend (Metrics)
   prometheus:
@@ -46,12 +49,19 @@ services:
   tempo:
     image: grafana/tempo:latest
     container_name: tempo
+    restart: unless-stopped
     command:
       - "-config.file=/etc/tempo.yaml"
     volumes:
       - ./library/configs/tempo-config.yaml:/etc/tempo.yaml
     ports:
-      - "3200:3200" # Tempo UI/API
+      - "3200:3200" # Tempo UI/API (queried by Grafana)
+      # NOTE: 4317/4318 are intentionally NOT published to the host here -
+      # otel-collector already publishes those exact ports (see above), and
+      # two services can't both bind the same host port. That's fine: the
+      # otel-collector container reaches tempo:4317 over the internal
+      # Docker Compose network by service name, which doesn't require a
+      # "ports:" mapping at all - only host-external access would.
 
   # Grafana Frontend (Visualization)
   grafana:

@@ -50,6 +50,7 @@ set "OTEL_SERVICE_NAME=mcp-client" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://lo
 ## 3. View traces
 - go to http://localhost:3000
 - visit Explore
+- check otel logs using  `docker compose logs --tail 0 -f otel-collector`
 
 ## workflow
 - `otelc pin` command will generate `otelc.instrumentation.go` file in both client and server depending on the packages used that needs to be instrumented

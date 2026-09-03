@@ -1,19 +1,36 @@
+# Based directly on the current official grafana/tempo docker-compose example
+# (example/docker-compose/single-binary/tempo.yaml in the grafana/tempo repo),
+# trimmed to what this stack needs. The previous version of this file
+# included `ingester.max_block_duration` and
+# `compactor.compaction.block_retention` blocks - fields that have been
+# removed/renamed in current Tempo releases. Tempo validates its config
+# strictly, so an unrecognized field is a hard startup failure, not a
+# warning - which is exactly why the container was exiting immediately and
+# then disappearing from Docker's internal DNS ("no such host tempo"),
+# rather than just refusing connections. This version omits those sections
+# entirely and relies on Tempo's own defaults, matching the known-working
+# upstream example.
+
 server:
   http_listen_port: 3200
+  log_level: info
 
 distributor:
   receivers:
     otlp:
       protocols:
         grpc:
-          endpoint: 0.0.0.0:4317
+          endpoint: "0.0.0.0:4317"
         http:
-          endpoint: 0.0.0.0:4318
+          endpoint: "0.0.0.0:4318"
 
 storage:
   trace:
     backend: local
-    local:
-      path: /tmp/tempo/blocks
     wal:
-      path: /tmp/tempo/wal
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+usage_report:
+  reporting_enabled: false

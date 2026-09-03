@@ -4,7 +4,7 @@ datasources:
   # Prometheus Configuration
   - name: Prometheus
     type: prometheus
-    uid: prometheus            # NEW: needed so Tempo's datasourceUid: prometheus resolves
+    uid: prometheus            # needed so Tempo's datasourceUid: prometheus resolves
     access: proxy
     url: http://prometheus:9090
     editable: true
@@ -19,7 +19,7 @@ datasources:
   # Tempo Configuration
   - name: Tempo
     type: tempo
-    uid: tempo                 # NEW: needed so Prometheus's datasourceUid: tempo resolves
+    uid: tempo                 # needed so Prometheus's datasourceUid: tempo resolves
     access: proxy
     url: http://tempo:3200
     isDefault: true
@@ -32,24 +32,32 @@ datasources:
         datasourceUid: prometheus
         spanStartTimeShift: -1m
         spanEndTimeShift: 1m
+        # Updated to the current stable HTTP semconv attribute names, as
+        # actually emitted by otelhttp 0.71.0 (confirmed via the collector's
+        # debug exporter): http.request.method / http.response.status_code.
+        # The old http.target / http.status_code / http.method names are from
+        # the pre-2023 unstable semconv and are no longer produced.
         tags:
-          - key: http.target
-            value: http_target
-          - key: http.status_code
-            value: http_status_code
-          - key: http.method
-            value: http_method
+          - key: http.request.method
+            value: http_request_method
+          - key: http.response.status_code
+            value: http_response_status_code
         queries:
           - name: 'View Request Rate'
-            query: 'sum(rate(otel_http_server_duration_milliseconds_count{$__tags}[1m]))'
-      # NEW: trace -> logs correlation
+            # otel_ prefix comes from the collector's prometheus exporter
+            # namespace: "otel" (see otel-collector-config.yaml). Metric name
+            # itself is the current stable semconv name,
+            # http.server.request.duration (seconds), not the old
+            # http.server.duration (milliseconds).
+            query: 'sum(rate(otel_http_server_request_duration_seconds_count{$__tags}[1m]))'
+      # trace -> logs correlation
       tracesToLogsV2:
         datasourceUid: loki
         spanStartTimeShift: '-5m'
         spanEndTimeShift: '5m'
         filterByTraceID: true
 
-  # NEW: Loki Configuration
+  # Loki Configuration
   - name: Loki
     type: loki
     uid: loki

@@ -17,11 +17,29 @@ exporters:
     endpoint: tempo:4317
     tls:
       insecure: true
-  # NEW: logs -> Loki, via Loki's native OTLP ingestion endpoint (Loki 3.x+)
+    # Retry/queue so a momentarily-unreachable Tempo (e.g. still starting up)
+    # doesn't silently drop spans instead of buffering and retrying them.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 1000
   otlphttp/loki:
     endpoint: http://loki:3100/otlp
     tls:
       insecure: true
+
+  # Uncomment to inspect exactly what the collector receives, verbosity=detailed
+  # prints every metric/span/log with full attributes to the collector's own
+  # logs. Useful when data isn't showing up downstream and you need to confirm
+  # whether the app is sending it at all vs. it being dropped/misrouted later
+  # in the pipeline. Remove or comment out again once you're done — it's noisy.
+  # debug:
+  #   verbosity: detailed
 
 service:
   pipelines:
@@ -33,7 +51,6 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp/tempo]
-    # NEW
     logs:
       receivers: [otlp]
       processors: [batch]

@@ -22,7 +22,7 @@ services:
       - "--config=/etc/otelcol-contrib/config.yaml"
 
     volumes:
-      - ./library/configs/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+      - ./configs/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
     ports:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
@@ -39,7 +39,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
     volumes:
-      - ./library/configs/prometheus-config.yaml:/etc/prometheus/prometheus.yml
+      - ./configs/prometheus-config.yaml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
     depends_on:
@@ -53,7 +53,7 @@ services:
     command:
       - "-config.file=/etc/tempo.yaml"
     volumes:
-      - ./library/configs/tempo-config.yaml:/etc/tempo.yaml
+      - ./configs/tempo-config.yaml:/etc/tempo.yaml
     ports:
       - "3200:3200" # Tempo UI/API (queried by Grafana)
       # NOTE: 4317/4318 are intentionally NOT published to the host here -
@@ -70,7 +70,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./library/configs/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./configs/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
 
     environment:
       # - GF_SECURITY_ADMIN_PASSWORD=admin

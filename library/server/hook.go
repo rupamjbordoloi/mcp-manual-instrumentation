@@ -4,16 +4,21 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.opentelemetry.io/otelc/pkg/hook"
 	"go.opentelemetry.io/otelc/pkg/runtime"
 )
@@ -45,10 +50,18 @@ const (
 	statelessMCPProtocolVersion = "2026-07-28"
 )
 
+type serverRequestData struct {
+	start   time.Time
+	method  string
+	httpCtx context.Context
+}
+
 var (
-	logger   = runtime.Logger()
-	tracer   trace.Tracer
-	initOnce sync.Once
+	logger          = runtime.Logger()
+	tracer          trace.Tracer
+	initOnce        sync.Once
+	metricsOnce     sync.Once
+	requestDuration metric.Float64Histogram
 )
 
 func initInstrumentation() {
@@ -59,6 +72,23 @@ func initInstrumentation() {
 		)
 
 		logger.Info("MCP server instrumentation initialized")
+	})
+}
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		logger.Info("initMetrics............")
+		meter := otel.Meter(
+			"go.opentelemetry.io/otelc/instrumentation/net/http/server",
+		)
+
+		requestDuration, _ = meter.Float64Histogram(
+			"http.server.request.duration",
+			metric.WithUnit("s"),
+			metric.WithDescription(
+				"Duration of HTTP server requests",
+			),
+		)
 	})
 }
 
@@ -685,6 +715,18 @@ func BeforeStreamableHTTP(
 
 	initInstrumentation()
 
+	initMetrics()
+
+	data := &serverRequestData{
+		start:   time.Now(),
+		method:  req.Method,
+		httpCtx: req.Context(),
+	}
+	fmt.Println(data)
+
+	ictx.SetData(data)
+	logger.Info("BeforeStreamableHTTP............")
+
 	// Only bridge POST requests. GET is the long-lived streaming transport
 	// connection and should not be used as the parent for individual MCP
 	// operations.
@@ -740,4 +782,14 @@ func BeforeStreamableHTTP(
 		"span_id",
 		sc.SpanID(),
 	)
+}
+
+func AfterStreamableHTTP(ictx hook.HookContext, mcpHandler *mcp.StreamableHTTPHandler) {
+	_ = otelhttp.NewHandler(
+		mcpHandler,
+		"mcp",
+		otelhttp.WithTracerProvider(noop.NewTracerProvider()),
+	)
+	// return instrumentedHandler
+
 }

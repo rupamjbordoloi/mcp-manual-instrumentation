@@ -18,12 +18,66 @@ mcp_server_new_server:
         after: AfterNewServer
         path: "library/server"
 
-mcp_server_streamable_http:
-  target: github.com/modelcontextprotocol/go-sdk/mcp
+# mcp_server_streamable_http:
+#   target: github.com/modelcontextprotocol/go-sdk/mcp
+#   where:
+#     func: NewStreamableHTTPHandler
+#   do:
+#     - wrap_call:
+#         replace: |-
+#           otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+#   imports:
+#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+#     noop: "go.opentelemetry.io/otel/trace/noop"
+#   # do:
+#   #   - inject_hooks:
+#   #       after: AfterStreamableHTTP
+#   #       path: "library/server"
+
+# http_metrics_wrap:
+#   # target: $root
+#   target: main
+#   # target: github.com/modelcontextprotocol/go-sdk/mcp
+#   where:
+#     function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
+#     # func: NewStreamableHTTPHandler
+#   do:
+#     - wrap_call:
+#         replace: |-
+#           (func() {
+#             fmt.Println("....................hi........................")
+#             return otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+#           })()
+          
+#   imports:
+#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+#     noop: "go.opentelemetry.io/otel/trace/noop"
+#     fmt: "fmt"
+
+# http_metrics_wrap:
+#   target: $root
+#   where:
+#     function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
+#   do:
+#     - wrap_call:
+#         replace: |-
+#           otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+#   imports:
+#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+#     noop: "go.opentelemetry.io/otel/trace/noop"
+
+http_metrics_wrap:
+  target: $root
   where:
-    func: ServeHTTP
-    recv: "*StreamableServerTransport"
+    function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
   do:
-    - inject_hooks:
-        before: BeforeStreamableHTTP
-        path: "library/server"
+    - wrap_call:
+        replace: |-
+          otelhttp.NewHandler(func() http.Handler {
+          	fmt.Println("[otelc] http_metrics_wrap: wrapping MCP handler with otelhttp for HTTP metrics")
+          	return {{ . }}
+          }(), "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+  imports:
+    otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+    noop: "go.opentelemetry.io/otel/trace/noop"
+    fmt: "fmt"

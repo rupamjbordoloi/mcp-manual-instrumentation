@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/contrib/exporters/autoexport"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otelc/pkg/hook"
 	"go.opentelemetry.io/otelc/pkg/runtime"
@@ -58,6 +60,25 @@ var (
 	logger   = runtime.Logger()
 	tracer   trace.Tracer
 	initOnce sync.Once
+
+	// shutdownTracer and shutdownProvider back mcp.session and mcp.shutdown
+	// specifically. Both spans straddle process termination: mcp.session is
+	// created at startup but only ends after Close(), and mcp.shutdown is
+	// created and ended entirely inside the signal-triggered shutdown path.
+	//
+	// The runtime package installs its own SIGINT/SIGTERM handler as a
+	// safety net for applications that don't flush on their own (see
+	// pkg/runtime/setup.go). It races this package's own graceful shutdown
+	// and, since it shuts down the global TracerProvider it owns, any span
+	// still open when it wins that race is silently dropped — we can't
+	// change that behavior without modifying that package.
+	//
+	// What we can do instead: give these two spans their own TracerProvider,
+	// with a synchronous (non-batching) exporter, so their entire lifecycle
+	// is independent of the global provider and is never affected by
+	// whether or when the runtime package shuts that one down.
+	shutdownTracer   trace.Tracer
+	shutdownProvider *sdktrace.TracerProvider
 )
 
 func initInstrumentation() {
@@ -67,8 +88,35 @@ func initInstrumentation() {
 			trace.WithInstrumentationVersion(runtime.ModuleVersion()),
 		)
 
+		shutdownTracer = newShutdownTracer()
+
 		logger.Info("MCP client instrumentation initialized")
 	})
+}
+
+// newShutdownTracer builds a small, self-contained TracerProvider using a
+// synchronous exporter (sdktrace.WithSyncer): every span export happens
+// inline inside span.End(), with no background batching goroutine for a
+// signal handler to shut down out from under us. It uses the same
+// OTEL_TRACES_EXPORTER-driven exporter selection as the runtime package
+// (autoexport), so it ships to the same destination.
+//
+// Falls back to the regular tracer if construction fails, so a shutdown
+// span is still created (even if export can't be guaranteed) rather than
+// leaving shutdownTracer nil.
+func newShutdownTracer() trace.Tracer {
+	exporter, err := autoexport.NewSpanExporter(context.Background())
+	if err != nil {
+		logger.Warn("failed to create dedicated shutdown-span exporter, falling back to the shared tracer", "error", err)
+		return tracer
+	}
+
+	shutdownProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+
+	return shutdownProvider.Tracer(
+		instrumentationName,
+		trace.WithInstrumentationVersion(runtime.ModuleVersion()),
+	)
 }
 
 type mcpClientEnabler struct{}
@@ -483,7 +531,7 @@ func BeforeConnect(
 
 	logger.Debug("BeforeConnect called")
 
-	sessionCtx, sessionSpan := tracer.Start(
+	sessionCtx, sessionSpan := shutdownTracer.Start(
 		ctx,
 		"mcp.session",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -603,7 +651,7 @@ func BeforeClose(ictx hook.HookContext, recv *mcp.ClientSession) {
 		entry.spanContext.WithRemote(false),
 	)
 
-	_, shutdownSpan := tracer.Start(
+	_, shutdownSpan := shutdownTracer.Start(
 		shutdownCtx,
 		"mcp.shutdown",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -680,5 +728,14 @@ func AfterMain(ictx hook.HookContext) {
 		logger.Error("error flushing telemetry during shutdown", "error", err)
 	} else {
 		logger.Info("OpenTelemetry SDK shutdown completed successfully")
+	}
+
+	// mcp.session/mcp.shutdown were already synchronously exported when
+	// End() was called (sdktrace.WithSyncer), so this only releases the
+	// dedicated exporter's own resources (e.g. its HTTP connection).
+	if shutdownProvider != nil {
+		if err := shutdownProvider.Shutdown(ctx); err != nil {
+			logger.Error("error shutting down dedicated shutdown-span provider", "error", err)
+		}
 	}
 }

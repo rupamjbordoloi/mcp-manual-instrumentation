@@ -4,21 +4,16 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"reflect"
 	"sync"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 	"go.opentelemetry.io/otelc/pkg/hook"
 	"go.opentelemetry.io/otelc/pkg/runtime"
 )
@@ -50,45 +45,16 @@ const (
 	statelessMCPProtocolVersion = "2026-07-28"
 )
 
-type serverRequestData struct {
-	start   time.Time
-	method  string
-	httpCtx context.Context
-}
-
 var (
-	logger          = runtime.Logger()
-	tracer          trace.Tracer
-	initOnce        sync.Once
-	metricsOnce     sync.Once
-	requestDuration metric.Float64Histogram
+	logger   = runtime.Logger()
+	tracer   trace.Tracer
+	initOnce sync.Once
 )
 
 func initInstrumentation() {
 	initOnce.Do(func() {
-		tracer = otel.GetTracerProvider().Tracer(
-			instrumentationName,
-			trace.WithInstrumentationVersion(runtime.ModuleVersion()),
-		)
-
+		tracer = otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(runtime.ModuleVersion()))
 		logger.Info("MCP server instrumentation initialized")
-	})
-}
-
-func initMetrics() {
-	metricsOnce.Do(func() {
-		logger.Info("initMetrics............")
-		meter := otel.Meter(
-			"go.opentelemetry.io/otelc/instrumentation/net/http/server",
-		)
-
-		requestDuration, _ = meter.Float64Histogram(
-			"http.server.request.duration",
-			metric.WithUnit("s"),
-			metric.WithDescription(
-				"Duration of HTTP server requests",
-			),
-		)
 	})
 }
 
@@ -106,11 +72,7 @@ var serverEnabler = mcpServerEnabler{}
 // successful protocol result itself, such as CallToolResult.IsError=true.
 // It deliberately uses a low-cardinality value rather than recording the
 // arbitrary error/result message as an attribute.
-func finishSpan(
-	span trace.Span,
-	err error,
-	semanticErrorType string,
-) {
+func finishSpan(span trace.Span, err error, semanticErrorType string) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetAttributes(
@@ -129,11 +91,7 @@ func finishSpan(
 	spanID := span.SpanContext().SpanID()
 	span.End()
 
-	logger.Debug(
-		"finishSpan",
-		"span_id",
-		spanID,
-	)
+	logger.Debug("finishSpan", "span_id", spanID)
 }
 
 // errorType returns a low-cardinality error classification.
@@ -210,11 +168,7 @@ func BeforeCallTool(
 		attribute.String(attrRPCMethod, "tools/call"),
 	}
 
-	appendMCPContextAttributes(
-		&attributes,
-		protocolVersion,
-		sessionID,
-	)
+	appendMCPContextAttributes(&attributes, protocolVersion, sessionID)
 
 	newCtx, span := tracer.Start(
 		ctx,
@@ -241,11 +195,7 @@ func BeforeCallTool(
 	)
 }
 
-func AfterCallTool(
-	ictx hook.HookContext,
-	res *mcp.CallToolResult,
-	err error,
-) {
+func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 	span, ok := ictx.GetKeyData("span").(trace.Span)
 	if !ok || span == nil {
 		logger.Debug("AfterCallTool: no span from before hook")
@@ -287,51 +237,25 @@ func AfterCallTool(
 
 // ---- Protocol middleware ----
 
-func AfterNewServer(
-	ictx hook.HookContext,
-	s *mcp.Server,
-) {
+func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 	if !serverEnabler.Enable() {
 		return
 	}
 
 	initInstrumentation()
 
-	logger.Debug(
-		"AfterNewServer: installing protocol middleware",
-	)
+	logger.Debug("AfterNewServer: installing protocol middleware")
 
 	s.AddReceivingMiddleware(serverProtocolMiddleware)
 }
 
-// serverProtocolMiddleware creates one span per meaningful inbound MCP method.
-//
-// Notifications that do not have meaningful server-side work are intentionally
-// not instrumented here.
-//
-// The MCP SDK may process multiple JSON-RPC messages over the same HTTP
-// connection/request. Each MCP method gets its own span and is parented to
-// the HTTP server span when the HTTP trace context can be recovered.
-//
-// Tool calls use the current MCP semantic-convention shape:
-//
-//	tools/call <tool>
-//
-// with:
-//
-//	mcp.method.name       = tools/call
-//	gen_ai.tool.name      = <tool>
-//	gen_ai.operation.name = execute_tool
-//
-// The HTTP span remains available underneath the MCP transport boundary.
-func serverProtocolMiddleware(
-	next mcp.MethodHandler,
-) mcp.MethodHandler {
-	return func(
-		ctx context.Context,
-		method string,
-		req mcp.Request,
-	) (mcp.Result, error) {
+// serverProtocolMiddleware creates one span per meaningful inbound MCP
+// method (notifications are skipped — see isNotification), parented to the
+// HTTP server span recovered via the BeforeStreamableHTTP bridge. Tool
+// calls are named "tools/call <tool>" with gen_ai.tool.name/
+// gen_ai.operation.name set per the current MCP semantic conventions.
+func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		if !serverEnabler.Enable() {
 			return next(ctx, method, req)
 		}
@@ -342,23 +266,16 @@ func serverProtocolMiddleware(
 			return next(ctx, method, req)
 		}
 
-		// IMPORTANT:
-		//
-		// In stateful Streamable HTTP, ctx can belong to the persistent MCP
-		// session rather than the current HTTP POST.
-		//
-		// Recover the current HTTP server span from the request metadata
-		// injected by BeforeStreamableHTTP.
+		// In stateful Streamable HTTP, ctx may belong to the persistent MCP
+		// session rather than this specific HTTP POST, so recover the
+		// current HTTP server span from the header BeforeStreamableHTTP set.
 		if extra := req.GetExtra(); extra != nil && extra.Header != nil {
 			if traceparent := extra.Header.Get(httpSpanContextHeader); traceparent != "" {
 				carrier := propagation.MapCarrier{
 					"traceparent": traceparent,
 				}
 
-				ctx = otel.GetTextMapPropagator().Extract(
-					ctx,
-					carrier,
-				)
+				ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
 
 				// The HTTP server span was created locally by net/http
 				// instrumentation, so it is not a remote parent.
@@ -375,10 +292,7 @@ func serverProtocolMiddleware(
 		sessionID := requestSessionID(req)
 		toolName := requestToolName(req, method)
 
-		spanName := methodToSpanName(
-			method,
-			toolName,
-		)
+		spanName := methodToSpanName(method, toolName)
 
 		attributes := []attribute.KeyValue{
 			attribute.String(attrMCPMethodName, method),
@@ -386,23 +300,13 @@ func serverProtocolMiddleware(
 			attribute.String(attrRPCMethod, method),
 		}
 
-		appendMCPContextAttributes(
-			&attributes,
-			protocolVersion,
-			sessionID,
-		)
+		appendMCPContextAttributes(&attributes, protocolVersion, sessionID)
 
 		if method == "tools/call" && toolName != "" {
 			attributes = append(
 				attributes,
-				attribute.String(
-					attrGenAIToolName,
-					toolName,
-				),
-				attribute.String(
-					attrGenAIOperationName,
-					genAIOperationExecuteTool,
-				),
+				attribute.String(attrGenAIToolName, toolName),
+				attribute.String(attrGenAIOperationName, genAIOperationExecuteTool),
 			)
 		}
 
@@ -412,14 +316,8 @@ func serverProtocolMiddleware(
 		if isHTTPMCPRequest(req) {
 			attributes = append(
 				attributes,
-				attribute.String(
-					attrNetworkTransport,
-					"tcp",
-				),
-				attribute.String(
-					attrNetworkProtocolName,
-					"http",
-				),
+				attribute.String(attrNetworkTransport, "tcp"),
+				attribute.String(attrNetworkProtocolName, "http"),
 			)
 		}
 
@@ -455,37 +353,20 @@ func serverProtocolMiddleware(
 			methodSpan.AddEvent("capability.enumeration")
 		}
 
-		result, err := next(
-			ctx,
-			method,
-			req,
-		)
+		result, err := next(ctx, method, req)
 
 		switch {
 		case err != nil:
-			finishSpan(
-				methodSpan,
-				err,
-				"",
-			)
+			finishSpan(methodSpan, err, "")
 
 		case isToolResultError(result):
 			// CallToolResult.IsError=true is a tool-level failure encoded
 			// inside an otherwise successful JSON-RPC response.
-			finishSpan(
-				methodSpan,
-				nil,
-				toolErrorType,
-			)
+			finishSpan(methodSpan, nil, toolErrorType)
 
 		default:
-			finishSpan(
-				methodSpan,
-				nil,
-				"",
-			)
+			finishSpan(methodSpan, nil, "")
 		}
-		logger.Debug("is recording...", "method", method, "span IsRecording", methodSpan.IsRecording())
 
 		return result, err
 	}
@@ -509,20 +390,14 @@ func appendMCPContextAttributes(
 	if protocolVersion != "" {
 		*attributes = append(
 			*attributes,
-			attribute.String(
-				attrMCPProtocolVersion,
-				protocolVersion,
-			),
+			attribute.String(attrMCPProtocolVersion, protocolVersion),
 		)
 	}
 
 	if shouldRecordSessionID(protocolVersion) && sessionID != "" {
 		*attributes = append(
 			*attributes,
-			attribute.String(
-				attrMCPSessionID,
-				sessionID,
-			),
+			attribute.String(attrMCPSessionID, sessionID),
 		)
 	}
 }
@@ -600,10 +475,7 @@ func requestSessionID(req mcp.Request) string {
 //	mcp.tool.name = tools/list
 //
 // which is semantically incorrect. A tool name exists only for a tool call.
-func requestToolName(
-	req mcp.Request,
-	method string,
-) string {
+func requestToolName(req mcp.Request, method string) string {
 	if method != "tools/call" || req == nil {
 		return ""
 	}
@@ -627,10 +499,7 @@ func requestToolName(
 //
 // For tools/call the target is the tool name. For methods without a
 // low-cardinality target, the method name alone is used.
-func methodToSpanName(
-	method string,
-	toolName string,
-) string {
+func methodToSpanName(method string, toolName string) string {
 	if method == "tools/call" && toolName != "" {
 		return "tools/call " + toolName
 	}
@@ -674,17 +543,9 @@ func PrintParentSpan(ctx context.Context) {
 		parentSpanID := spanContext.SpanID().String()
 		traceID := spanContext.TraceID().String()
 
-		logger.Debug(
-			"PrintParentSpan",
-			"parent_span_id",
-			parentSpanID,
-		)
+		logger.Debug("PrintParentSpan", "parent_span_id", parentSpanID)
 
-		logger.Debug(
-			"PrintParentSpan",
-			"trace_id",
-			traceID,
-		)
+		logger.Debug("PrintParentSpan", "trace_id", traceID)
 	} else {
 		logger.Debug(
 			"No valid parent span found in the context (this will be a root span).",
@@ -692,18 +553,13 @@ func PrintParentSpan(ctx context.Context) {
 	}
 }
 
-// BeforeStreamableHTTP bridges the current HTTP server span into the MCP
-// request context.
-//
-// In stateful Streamable HTTP, the MCP SDK may use a persistent session
-// context for subsequent JSON-RPC messages. The HTTP server span, however,
-// belongs to the individual HTTP request.
-//
-// We therefore copy the current HTTP traceparent into RequestExtra metadata
-// via the private bridge header. serverProtocolMiddleware extracts it again
-// before creating the MCP server span.
-//
-// Keep the request context itself unchanged.
+// BeforeStreamableHTTP runs once per inbound HTTP request (this is
+// (*StreamableServerTransport).ServeHTTP — see mcp.otelc.yaml) and copies
+// the current HTTP traceparent into the request's RequestExtra.Header via
+// a private bridge header. serverProtocolMiddleware extracts it again to
+// recover the correct per-request parent, since the MCP SDK may otherwise
+// dispatch a message using the persistent session context rather than the
+// context of the HTTP request that actually delivered it.
 func BeforeStreamableHTTP(
 	ictx hook.HookContext,
 	recv *mcp.StreamableServerTransport,
@@ -715,18 +571,6 @@ func BeforeStreamableHTTP(
 	}
 
 	initInstrumentation()
-
-	initMetrics()
-
-	data := &serverRequestData{
-		start:   time.Now(),
-		method:  req.Method,
-		httpCtx: req.Context(),
-	}
-	fmt.Println(data)
-
-	ictx.SetData(data)
-	logger.Info("BeforeStreamableHTTP............")
 
 	// Only bridge POST requests. GET is the long-lived streaming transport
 	// connection and should not be used as the parent for individual MCP
@@ -741,9 +585,7 @@ func BeforeStreamableHTTP(
 
 	sc := trace.SpanContextFromContext(httpCtx)
 	if !sc.IsValid() {
-		logger.Debug(
-			"BeforeStreamableHTTP: no valid HTTP server span",
-		)
+		logger.Debug("BeforeStreamableHTTP: no valid HTTP server span")
 		return
 	}
 
@@ -752,29 +594,20 @@ func BeforeStreamableHTTP(
 	// for the corresponding JSON-RPC request.
 	carrier := propagation.MapCarrier{}
 
-	otel.GetTextMapPropagator().Inject(
-		httpCtx,
-		carrier,
-	)
+	otel.GetTextMapPropagator().Inject(httpCtx, carrier)
 
 	traceparent := carrier.Get("traceparent")
 	if traceparent == "" {
 		return
 	}
 
-	req.Header.Set(
-		httpSpanContextHeader,
-		traceparent,
-	)
+	req.Header.Set(httpSpanContextHeader, traceparent)
 
 	// Keep the request context unchanged.
 	//
 	// The important part is the per-HTTP-request span context stored in
 	// RequestExtra.Header.
-	ictx.SetParam(
-		2,
-		req,
-	)
+	ictx.SetParam(2, req)
 
 	logger.Debug(
 		"BeforeStreamableHTTP: bridged HTTP trace context",
@@ -783,14 +616,4 @@ func BeforeStreamableHTTP(
 		"span_id",
 		sc.SpanID(),
 	)
-}
-
-func AfterStreamableHTTP(ictx hook.HookContext, mcpHandler *mcp.StreamableHTTPHandler) {
-	_ = otelhttp.NewHandler(
-		mcpHandler,
-		"mcp",
-		otelhttp.WithTracerProvider(noop.NewTracerProvider()),
-	)
-	// return instrumentedHandler
-
 }

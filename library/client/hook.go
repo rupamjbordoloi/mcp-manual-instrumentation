@@ -81,22 +81,12 @@ var clientEnabler = mcpClientEnabler{}
 
 // sessionParentCtx maps *mcp.ClientSession -> sessionEntry.
 //
-// It is populated after Connect succeeds and is used by the client protocol
-// middleware for post-connect operations.
-//
-// The session span is the logical root for the MCP client-side lifecycle:
-//
-//	mcp.session
-//	   ├── initialize
-//	   ├── tools/call greet
-//	   ├── tools/list
-//	   └── mcp.shutdown
-//
-// IMPORTANT:
-// The session span context is kept LOCAL, not REMOTE.
-//
-// The HTTP client instrumentation creates a child span from the MCP operation
-// span. The server then receives that HTTP client span as a remote parent.
+// Populated once Connect succeeds. clientProtocolMiddleware consults it to
+// parent the connect-time handshake spans (server/discover, initialize,
+// notifications/initialized) under mcp.session. Kept as a LOCAL span
+// context (not remote): the HTTP client span created underneath it is a
+// same-process child, and it's the server that later sees that HTTP span
+// as a remote parent.
 var sessionParentCtx sync.Map // map[*mcp.ClientSession]sessionEntry
 
 type sessionEntry struct {
@@ -113,11 +103,7 @@ type sessionEntry struct {
 //
 // We deliberately do not store arbitrary error strings as attributes because
 // they can contain sensitive data and create high-cardinality telemetry.
-func finishSpan(
-	span trace.Span,
-	err error,
-	errorTypeValue string,
-) {
+func finishSpan(span trace.Span, err error, errorTypeValue string) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetAttributes(
@@ -137,11 +123,7 @@ func finishSpan(
 
 	span.End()
 
-	logger.Debug(
-		"finishSpan",
-		"span_id",
-		spanID,
-	)
+	logger.Debug("finishSpan", "span_id", spanID)
 }
 
 // errorType intentionally returns a low-cardinality classification.
@@ -157,66 +139,30 @@ func errorType(err error) string {
 
 // ---- NewClient hook ----
 
-func AfterNewClient(
-	ictx hook.HookContext,
-	c *mcp.Client,
-) {
+func AfterNewClient(ictx hook.HookContext, c *mcp.Client) {
 	if !clientEnabler.Enable() {
 		return
 	}
 
 	initInstrumentation()
 
-	logger.Debug(
-		"AfterNewClient: installing protocol middleware",
-	)
+	logger.Debug("AfterNewClient: installing protocol middleware")
 
 	c.AddSendingMiddleware(clientProtocolMiddleware)
 }
 
 // clientProtocolMiddleware creates one client span per outbound MCP method.
 //
-// During Connect:
+// The connect-time handshake (server/discover, initialize,
+// notifications/initialized) is parented under mcp.session. Everything
+// after Connect returns (tools/call, tools/list, ...) instead uses
+// whatever context the caller passed in — see isSessionLifecycleMethod.
 //
-//	mcp.session
-//	   ├── server/discover
-//	   ├── initialize
-//	   └── notifications/initialized
+// Either way this produces the same distributed trace shape:
 //
-// After Connect:
-//
-//	mcp.session
-//	   ├── tools/call greet
-//	   ├── tools/list
-//	   ├── resources/read
-//	   └── ...
-//
-// The session span is used as a LOCAL parent.
-//
-// This is intentional. The subsequent HTTP client span becomes a child of the
-// MCP operation span. When the HTTP request reaches the MCP server,
-// net/http server instrumentation extracts the HTTP client span context as
-// the remote parent.
-//
-// This produces the desired distributed trace:
-//
-//	client MCP span
-//	    ↓
-//	HTTP client span
-//	    ↓
-//	HTTP server span
-//	    ↓
-//	server MCP span
-//	    ↓
-//	tool span
-func clientProtocolMiddleware(
-	next mcp.MethodHandler,
-) mcp.MethodHandler {
-	return func(
-		ctx context.Context,
-		method string,
-		req mcp.Request,
-	) (mcp.Result, error) {
+//	client MCP span -> HTTP client span -> HTTP server span -> server MCP span -> tool span
+func clientProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		if !clientEnabler.Enable() {
 			return next(ctx, method, req)
 		}
@@ -240,44 +186,15 @@ func clientProtocolMiddleware(
 			}
 		}
 
-		// IMPORTANT:
-		//
-		// Use the session span as a LOCAL parent, but ONLY for the methods
-		// that make up the connect-time handshake (server/discover,
-		// initialize, notifications/initialized).
-		//
-		// Every operation issued after Connect has already returned (
-		// tools/call, tools/list, resources/read, ...) is a call the
-		// application makes explicitly with its own context, which may
-		// carry a meaningful, unrelated parent span (e.g. one HTTP request
-		// out of many served over the lifetime of a single long-lived
-		// session). Forcibly repinning that context onto the original
-		// mcp.session span would silently discard the caller's context and
-		// collapse every subsequent call back into one trace, regardless
-		// of when or why it was made.
-		//
-		// The previous implementation used:
-		//
-		//     trace.ContextWithRemoteSpanContext(...)
-		//
-		// That caused the client MCP operation span to have a remote parent
-		// even though both spans were created by the same process.
-		//
-		// This version keeps the client-side hierarchy local, and scopes it
-		// to the handshake only.
+		// Only force-parent onto mcp.session for the handshake methods.
+		// Everything else keeps the caller's own ctx (see comment above).
 		if hasSessionEntry &&
 			sessionEntryValue.spanContext.IsValid() &&
 			isSessionLifecycleMethod(method) {
-			ctx = trace.ContextWithSpanContext(
-				ctx,
-				sessionEntryValue.spanContext.WithRemote(false),
-			)
+			ctx = trace.ContextWithSpanContext(ctx, sessionEntryValue.spanContext.WithRemote(false))
 		}
 
-		toolName := requestToolName(
-			method,
-			req,
-		)
+		toolName := requestToolName(method, req)
 
 		protocolVersion := requestProtocolVersion(
 			method,
@@ -286,55 +203,26 @@ func clientProtocolMiddleware(
 			hasSessionEntry,
 		)
 
-		sessionID := requestSessionID(
-			req,
-			sessionEntryValue,
-			hasSessionEntry,
-		)
+		sessionID := requestSessionID(req, sessionEntryValue, hasSessionEntry)
 
-		spanName := clientMethodToSpanName(
-			method,
-			toolName,
-		)
+		spanName := clientMethodToSpanName(method, toolName)
 
 		attributes := []attribute.KeyValue{
-			attribute.String(
-				attrMCPMethodName,
-				method,
-			),
-			attribute.String(
-				attrRPCSystemName,
-				"jsonrpc",
-			),
-			attribute.String(
-				attrRPCMethod,
-				method,
-			),
+			attribute.String(attrMCPMethodName, method),
+			attribute.String(attrRPCSystemName, "jsonrpc"),
+			attribute.String(attrRPCMethod, method),
 		}
 
-		appendMCPContextAttributes(
-			&attributes,
-			protocolVersion,
-			sessionID,
-		)
+		appendMCPContextAttributes(&attributes, protocolVersion, sessionID)
 
 		if method == "tools/call" && toolName != "" {
 			attributes = append(
 				attributes,
-				attribute.String(
-					attrGenAIToolName,
-					toolName,
-				),
-				attribute.String(
-					attrGenAIOperationName,
-					genAIOperationExecuteTool,
-				),
+				attribute.String(attrGenAIToolName, toolName),
+				attribute.String(attrGenAIOperationName, genAIOperationExecuteTool),
 
 				// Backwards compatibility with the previous instrumentation.
-				attribute.String(
-					attrToolNameLegacy,
-					toolName,
-				),
+				attribute.String(attrToolNameLegacy, toolName),
 			)
 		}
 
@@ -361,44 +249,24 @@ func clientProtocolMiddleware(
 			sessionID,
 		)
 
-		result, err := next(
-			ctx,
-			method,
-			req,
-		)
+		result, err := next(ctx, method, req)
 
 		switch {
 		case err != nil:
 			// JSON-RPC / MCP protocol-level failure.
-			finishSpan(
-				methodSpan,
-				err,
-				"",
-			)
+			finishSpan(methodSpan, err, "")
 
 		case method == "tools/call" &&
 			isToolResultError(result):
 			// MCP tool-level failure represented inside the successful
 			// CallToolResult payload.
-			finishSpan(
-				methodSpan,
-				nil,
-				toolErrorType,
-			)
+			finishSpan(methodSpan, nil, toolErrorType)
 
 		default:
-			finishSpan(
-				methodSpan,
-				nil,
-				"",
-			)
+			finishSpan(methodSpan, nil, "")
 		}
 
-		logger.Debug(
-			"clientProtocolMiddleware",
-			"ending",
-			method,
-		)
+		logger.Debug("clientProtocolMiddleware", "ending", method)
 
 		return result, err
 	}
@@ -412,10 +280,7 @@ func clientProtocolMiddleware(
 //	mcp.tool.name = tools/list
 //
 // A tool name exists only for a tools/call operation.
-func requestToolName(
-	method string,
-	req mcp.Request,
-) string {
+func requestToolName(method string, req mcp.Request) string {
 	if method != "tools/call" || req == nil {
 		return ""
 	}
@@ -487,11 +352,7 @@ func requestProtocolVersion(
 //
 // The session ID is recorded only for legacy/session-based MCP. The
 // 2026-07-28 protocol removed the protocol-level session model.
-func requestSessionID(
-	req mcp.Request,
-	entry sessionEntry,
-	hasEntry bool,
-) string {
+func requestSessionID(req mcp.Request, entry sessionEntry, hasEntry bool) string {
 	if hasEntry &&
 		shouldRecordSessionID(entry.protocolVersion) &&
 		entry.sessionID != "" {
@@ -524,10 +385,7 @@ func appendMCPContextAttributes(
 	if protocolVersion != "" {
 		*attributes = append(
 			*attributes,
-			attribute.String(
-				attrMCPProtocolVersion,
-				protocolVersion,
-			),
+			attribute.String(attrMCPProtocolVersion, protocolVersion),
 		)
 	}
 
@@ -535,10 +393,7 @@ func appendMCPContextAttributes(
 		sessionID != "" {
 		*attributes = append(
 			*attributes,
-			attribute.String(
-				attrMCPSessionID,
-				sessionID,
-			),
+			attribute.String(attrMCPSessionID, sessionID),
 		)
 	}
 }
@@ -597,10 +452,7 @@ func isToolResultError(result mcp.Result) bool {
 // For other operations:
 //
 //	<mcp.method.name>
-func clientMethodToSpanName(
-	method string,
-	toolName string,
-) string {
+func clientMethodToSpanName(method string, toolName string) string {
 	if method == "tools/call" && toolName != "" {
 		return "tools/call " + toolName
 	}
@@ -609,23 +461,13 @@ func clientMethodToSpanName(
 }
 
 // ---- Connect hooks ----
+
+// BeforeConnect creates the single mcp.session span for this process.
+// clientProtocolMiddleware creates the handshake spans underneath it
+// (server/discover, initialize, notifications/initialized); this function
+// only owns the session span itself, to avoid duplicating those.
 //
-// BeforeConnect creates exactly one mcp.session span.
-//
-// Protocol operation spans are created by clientProtocolMiddleware:
-//
-//	server/discover
-//	initialize
-//	notifications/initialized
-//
-// This avoids duplicate initialize/discovery spans.
-//
-// Param indices:
-//
-//	recv=0
-//	ctx=1
-//	t=2
-//	opts=3
+// Param indices: recv=0, ctx=1, t=2, opts=3.
 func BeforeConnect(
 	ictx hook.HookContext,
 	recv *mcp.Client,
@@ -639,9 +481,7 @@ func BeforeConnect(
 
 	initInstrumentation()
 
-	logger.Debug(
-		"BeforeConnect called",
-	)
+	logger.Debug("BeforeConnect called")
 
 	sessionCtx, sessionSpan := tracer.Start(
 		ctx,
@@ -664,51 +504,28 @@ func BeforeConnect(
 
 	// Thread the session context into the SDK Connect call so that all
 	// protocol operations generated during connection inherit mcp.session.
-	ictx.SetParam(
-		1,
-		sessionCtx,
-	)
+	ictx.SetParam(1, sessionCtx)
 }
 
-func AfterConnect(
-	ictx hook.HookContext,
-	session *mcp.ClientSession,
-	err error,
-) {
+func AfterConnect(ictx hook.HookContext, session *mcp.ClientSession, err error) {
 	sessionSpan, ok := ictx.GetKeyData("sessionSpan").(trace.Span)
 	if !ok || sessionSpan == nil {
-		logger.Debug(
-			"AfterConnect: no sessionSpan from before hook",
-		)
+		logger.Debug("AfterConnect: no sessionSpan from before hook")
 		return
 	}
 
 	if err != nil {
-		finishSpan(
-			sessionSpan,
-			err,
-			"",
-		)
+		finishSpan(sessionSpan, err, "")
 
-		logger.Debug(
-			"AfterConnect called with error",
-			"error",
-			err,
-		)
+		logger.Debug("AfterConnect called with error", "error", err)
 
 		return
 	}
 
 	if session == nil {
-		finishSpan(
-			sessionSpan,
-			nil,
-			"",
-		)
+		finishSpan(sessionSpan, nil, "")
 
-		logger.Debug(
-			"AfterConnect: nil session",
-		)
+		logger.Debug("AfterConnect: nil session")
 
 		return
 	}
@@ -724,20 +541,14 @@ func AfterConnect(
 	// session span.
 	if protocolVersion != "" {
 		sessionSpan.SetAttributes(
-			attribute.String(
-				attrMCPProtocolVersion,
-				protocolVersion,
-			),
+			attribute.String(attrMCPProtocolVersion, protocolVersion),
 		)
 	}
 
 	if shouldRecordSessionID(protocolVersion) &&
 		sessionID != "" {
 		sessionSpan.SetAttributes(
-			attribute.String(
-				attrMCPSessionID,
-				sessionID,
-			),
+			attribute.String(attrMCPSessionID, sessionID),
 		)
 	}
 
@@ -762,10 +573,7 @@ func AfterConnect(
 
 // ---- Close hooks ----
 
-func BeforeClose(
-	ictx hook.HookContext,
-	recv *mcp.ClientSession,
-) {
+func BeforeClose(ictx hook.HookContext, recv *mcp.ClientSession) {
 	if !clientEnabler.Enable() {
 		return
 	}
@@ -774,9 +582,7 @@ func BeforeClose(
 
 	val, ok := sessionParentCtx.Load(recv)
 	if !ok {
-		logger.Debug(
-			"BeforeClose: no session entry",
-		)
+		logger.Debug("BeforeClose: no session entry")
 		return
 	}
 
@@ -784,9 +590,7 @@ func BeforeClose(
 
 	entry, ok := val.(sessionEntry)
 	if !ok {
-		logger.Debug(
-			"BeforeClose: invalid session entry",
-		)
+		logger.Debug("BeforeClose: invalid session entry")
 		return
 	}
 
@@ -804,26 +608,13 @@ func BeforeClose(
 		"mcp.shutdown",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
-			attribute.String(
-				attrMCPMethodName,
-				"shutdown",
-			),
-			attribute.String(
-				attrRPCSystemName,
-				"jsonrpc",
-			),
-			attribute.String(
-				attrRPCMethod,
-				"shutdown",
-			),
+			attribute.String(attrMCPMethodName, "shutdown"),
+			attribute.String(attrRPCSystemName, "jsonrpc"),
+			attribute.String(attrRPCMethod, "shutdown"),
 		),
 	)
 
-	appendMCPContextToSpan(
-		shutdownSpan,
-		entry.protocolVersion,
-		entry.sessionID,
-	)
+	appendMCPContextToSpan(shutdownSpan, entry.protocolVersion, entry.sessionID)
 
 	logger.Debug(
 		"creating mcp.shutdown span",
@@ -839,71 +630,46 @@ func BeforeClose(
 	)
 }
 
-func AfterClose(
-	ictx hook.HookContext,
-	err error,
-) {
+func AfterClose(ictx hook.HookContext, err error) {
 	shutdownSpan, ok := ictx.GetKeyData("shutdownSpan").(trace.Span)
 	if !ok || shutdownSpan == nil {
-		logger.Debug(
-			"AfterClose: no shutdown span",
-		)
+		logger.Debug("AfterClose: no shutdown span")
 		return
 	}
 
-	finishSpan(
-		shutdownSpan,
-		err,
-		"",
-	)
+	finishSpan(shutdownSpan, err, "")
 
 	// mcp.session remains open until the logical session has completely
 	// closed, so it ends after mcp.shutdown.
 	if sessionSpan, ok := ictx.GetKeyData("sessionSpan").(trace.Span); ok && sessionSpan != nil {
-		finishSpan(
-			sessionSpan,
-			err,
-			"",
-		)
+		finishSpan(sessionSpan, err, "")
 	}
 }
 
 // appendMCPContextToSpan adds protocol/session attributes directly to an
 // existing span.
-func appendMCPContextToSpan(
-	span trace.Span,
-	protocolVersion string,
-	sessionID string,
-) {
+func appendMCPContextToSpan(span trace.Span, protocolVersion string, sessionID string) {
 	if span == nil {
 		return
 	}
 
 	if protocolVersion != "" {
 		span.SetAttributes(
-			attribute.String(
-				attrMCPProtocolVersion,
-				protocolVersion,
-			),
+			attribute.String(attrMCPProtocolVersion, protocolVersion),
 		)
 	}
 
 	if shouldRecordSessionID(protocolVersion) &&
 		sessionID != "" {
 		span.SetAttributes(
-			attribute.String(
-				attrMCPSessionID,
-				sessionID,
-			),
+			attribute.String(attrMCPSessionID, sessionID),
 		)
 	}
 }
 
 // ---- Process shutdown ----
 
-func AfterMain(
-	ictx hook.HookContext,
-) {
+func AfterMain(ictx hook.HookContext) {
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
@@ -911,14 +677,8 @@ func AfterMain(
 	defer cancel()
 
 	if err := runtime.Shutdown(ctx); err != nil {
-		logger.Error(
-			"error flushing telemetry during shutdown",
-			"error",
-			err,
-		)
+		logger.Error("error flushing telemetry during shutdown", "error", err)
 	} else {
-		logger.Info(
-			"OpenTelemetry SDK shutdown completed successfully",
-		)
+		logger.Info("OpenTelemetry SDK shutdown completed successfully")
 	}
 }

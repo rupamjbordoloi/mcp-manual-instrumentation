@@ -18,24 +18,16 @@ mcp_server_new_server:
         after: AfterNewServer
         path: "library/server"
 
-# This is the rule that was missing. BeforeStreamableHTTP bridges the
-# current HTTP server span into the JSON-RPC request via the
-# X-OTel-MCP-HTTP-Span header (see hook.go), and serverProtocolMiddleware
-# depends on that header being set for every inbound POST. Without this
-# rule, BeforeStreamableHTTP never runs, so the bridge never fires — which
-# is why tools/call (dispatched by the SDK through the persistent session
-# rather than synchronously within its own POST) fell back onto whatever
-# context was ambient, landing under the initialize span instead of its
-# own HTTP request.
+# BeforeStreamableHTTP bridges the current HTTP server span into the
+# JSON-RPC request (see hook.go); serverProtocolMiddleware depends on that
+# bridge to correctly parent tools/call under its own HTTP request instead
+# of falling back to whatever session-level context is ambient.
 #
-# BeforeStreamableHTTP's signature — (w http.ResponseWriter, req
-# *http.Request) on *StreamableServerTransport — is the standard
-# http.Handler.ServeHTTP signature, which runs once per inbound HTTP
-# request rather than once per process like NewStreamableHTTPHandler does.
-# Only "before" is wired here: AfterStreamableHTTP takes a
-# *mcp.StreamableHTTPHandler, which belongs to NewStreamableHTTPHandler's
-# return value, not to ServeHTTP, so mixing it into this rule would not
-# type-check.
+# ServeHTTP runs once per inbound HTTP request (unlike NewStreamableHTTPHandler,
+# which only runs once per process), so this is the correct target for a
+# per-request hook. Only "before" is wired: AfterStreamableHTTP would need a
+# *mcp.StreamableHTTPHandler param, which belongs to NewStreamableHTTPHandler's
+# return value, not to ServeHTTP.
 mcp_server_streamable_http_request:
   target: github.com/modelcontextprotocol/go-sdk/mcp
   where:
@@ -46,54 +38,9 @@ mcp_server_streamable_http_request:
         before: BeforeStreamableHTTP
         path: "library/server"
 
-# mcp_server_streamable_http:
-#   target: github.com/modelcontextprotocol/go-sdk/mcp
-#   where:
-#     func: NewStreamableHTTPHandler
-#   do:
-#     - wrap_call:
-#         replace: |-
-#           otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
-#   imports:
-#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-#     noop: "go.opentelemetry.io/otel/trace/noop"
-#   # do:
-#   #   - inject_hooks:
-#   #       after: AfterStreamableHTTP
-#   #       path: "library/server"
-
-# http_metrics_wrap:
-#   # target: $root
-#   target: main
-#   # target: github.com/modelcontextprotocol/go-sdk/mcp
-#   where:
-#     function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
-#     # func: NewStreamableHTTPHandler
-#   do:
-#     - wrap_call:
-#         replace: |-
-#           (func() {
-#             fmt.Println("....................hi........................")
-#             return otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
-#           })()
-          
-#   imports:
-#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-#     noop: "go.opentelemetry.io/otel/trace/noop"
-#     fmt: "fmt"
-
-# http_metrics_wrap:
-#   target: $root
-#   where:
-#     function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
-#   do:
-#     - wrap_call:
-#         replace: |-
-#           otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
-#   imports:
-#     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-#     noop: "go.opentelemetry.io/otel/trace/noop"
-
+# Wraps the MCP handler with otelhttp for HTTP server metrics only
+# (WithTracerProvider(noop...) disables otelhttp's own span creation, since
+# tracing already comes from mcp_server_streamable_http_request above).
 http_metrics_wrap:
   target: $root
   where:
@@ -101,11 +48,7 @@ http_metrics_wrap:
   do:
     - wrap_call:
         replace: |-
-          otelhttp.NewHandler(func() http.Handler {
-          	fmt.Println("[otelc] http_metrics_wrap: wrapping MCP handler with otelhttp for HTTP metrics")
-          	return {{ . }}
-          }(), "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+          otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
   imports:
     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
     noop: "go.opentelemetry.io/otel/trace/noop"
-    fmt: "fmt"

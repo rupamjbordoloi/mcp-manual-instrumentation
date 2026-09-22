@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,13 +13,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mcpSession is established once at process startup and reused for every
-// incoming HTTP request until this process is terminated. This is the key
-// change: previously Connect -> CallTool -> Close all shared one context,
-// so mcp.session (started in BeforeConnect, ended in AfterClose) was the
-// ancestor of every tool-call span. Now Connect happens exactly once,
-// standalone, and each tool call rides on a fresh context supplied by an
-// incoming HTTP request.
+// mcpSession is established once at startup and reused for every incoming
+// HTTP request. Each request supplies its own fresh context to CallTool
+// (via req.Context()), so every tool call gets its own trace instead of
+// nesting under the long-lived mcp.session span created at Connect time.
 var mcpSession *mcp.ClientSession
 
 // callRequest is the JSON body accepted by the /call endpoint.
@@ -29,13 +25,8 @@ type callRequest struct {
 	Args map[string]any `json:"args"`
 }
 
-// callHandler forwards one HTTP request to one MCP tool call, reusing the
-// long-lived mcpSession. mcp.tools.call wraps (*ClientSession).CallTool
-// (BeforeCallTool/AfterCallTool hooks) exactly as before — what changes is
-// the context it runs under. req.Context() here is created fresh by the
-// net/http/server instrumentation for each incoming request, so every
-// mcp.tools.call span now starts its own trace instead of nesting inside
-// the single mcp.session span created at startup.
+// callHandler forwards one HTTP request to one MCP tool call on the
+// shared mcpSession.
 func callHandler(w http.ResponseWriter, req *http.Request) {
 	var body callRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -47,21 +38,15 @@ func callHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fmt.Println(body.Tool, body.Args)
-
 	res, err := mcpSession.CallTool(req.Context(), &mcp.CallToolParams{
-		Name: body.Tool,
-		// Arguments: body.Args,
-		Arguments: map[string]string{"name": "HDFC"},
+		Name:      body.Tool,
+		Arguments: body.Args,
 	})
-	out, err := json.MarshalIndent(res, "", "  ")
-	fmt.Println(string(out))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	if res.IsError {
-		fmt.Println(res.Content, err)
 		http.Error(w, "tool call returned an error", http.StatusUnprocessableEntity)
 		return
 	}
@@ -70,10 +55,7 @@ func callHandler(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(res)
 }
 
-// connect establishes the MCP session exactly once. mcp.session starts
-// inside (*Client).Connect (BeforeConnect hook) and mcp.initialize ends
-// inside (*Client).Connect (AfterConnect hook) — both happen a single time
-// at process startup, standalone from any tool-call trace.
+// connect establishes the MCP session exactly once, at startup.
 func connect(ctx context.Context) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-client", Version: "v1.0.0"}, nil)
 

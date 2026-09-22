@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -34,9 +33,7 @@ func SayHi(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 	if input.Name == "" {
 		return nil, Output{}, errors.New("name is required")
 	}
-	fmt.Println("executing sayhi------->>>")
-	time.Sleep(time.Second * 5)
-	fmt.Println("executed sayhi------->>>")
+	time.Sleep(5 * time.Second)
 	return nil, Output{Greeting: "Hi " + input.Name}, nil
 }
 
@@ -48,9 +45,7 @@ func SayBye(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 	if input.Name == "" {
 		return nil, Output{}, errors.New("name is required")
 	}
-	fmt.Println("executing SayBye------->>>")
-	time.Sleep(time.Second * 4)
-	fmt.Println("executed SayBye------->>>")
+	time.Sleep(4 * time.Second)
 	return nil, Output{Greeting: "Bye " + input.Name}, nil
 }
 
@@ -69,32 +64,15 @@ func runServer(url string) {
 		Version: "v1.0.0",
 	}, nil)
 
-	// Add MCP-level logging middleware.
-	// server.AddReceivingMiddleware(library.ServerProtocolMiddleware)
-
 	mcp.AddTool(server, &mcp.Tool{Name: "greet", Description: "say hi"}, SayHi)
 	mcp.AddTool(server, &mcp.Tool{Name: "bye", Description: "say bye"}, SayBye)
 
-	// Create the streamable HTTP handler.
+	// Tracing and HTTP metrics are applied automatically at build time by
+	// mcp.otelc.yaml (mcp_server_streamable_http_request, http_metrics_wrap)
+	// — no manual wrapping needed here.
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server
-	},
-		nil,
-		// &mcp.StreamableHTTPOptions{Stateless: true},
-	)
-
-	// TEMPORARY: manual wrap for validation. Once confirmed working, this
-	// wrap moves into a wrap_call otelc rule so it's applied automatically
-	// at build time and this line goes away.
-	//
-	// WithTracerProvider(noop...) disables otelhttp's own span creation —
-	// traces already come from the existing net/http/server otelc hook, so
-	// this wrap is metrics-only and won't create duplicate/nested spans.
-	// instrumentedHandler := otelhttp.NewHandler(
-	// 	mcpHandler,
-	// 	"mcp",
-	// 	otelhttp.WithTracerProvider(noop.NewTracerProvider()),
-	// )
+	}, nil)
 
 	srv := &http.Server{Addr: url, Handler: mcpHandler}
 

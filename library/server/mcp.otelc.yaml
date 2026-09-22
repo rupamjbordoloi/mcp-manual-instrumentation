@@ -18,6 +18,34 @@ mcp_server_new_server:
         after: AfterNewServer
         path: "library/server"
 
+# This is the rule that was missing. BeforeStreamableHTTP bridges the
+# current HTTP server span into the JSON-RPC request via the
+# X-OTel-MCP-HTTP-Span header (see hook.go), and serverProtocolMiddleware
+# depends on that header being set for every inbound POST. Without this
+# rule, BeforeStreamableHTTP never runs, so the bridge never fires — which
+# is why tools/call (dispatched by the SDK through the persistent session
+# rather than synchronously within its own POST) fell back onto whatever
+# context was ambient, landing under the initialize span instead of its
+# own HTTP request.
+#
+# BeforeStreamableHTTP's signature — (w http.ResponseWriter, req
+# *http.Request) on *StreamableServerTransport — is the standard
+# http.Handler.ServeHTTP signature, which runs once per inbound HTTP
+# request rather than once per process like NewStreamableHTTPHandler does.
+# Only "before" is wired here: AfterStreamableHTTP takes a
+# *mcp.StreamableHTTPHandler, which belongs to NewStreamableHTTPHandler's
+# return value, not to ServeHTTP, so mixing it into this rule would not
+# type-check.
+mcp_server_streamable_http_request:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: ServeHTTP
+    recv: "*StreamableServerTransport"
+  do:
+    - inject_hooks:
+        before: BeforeStreamableHTTP
+        path: "library/server"
+
 # mcp_server_streamable_http:
 #   target: github.com/modelcontextprotocol/go-sdk/mcp
 #   where:

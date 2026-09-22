@@ -19,7 +19,7 @@ This places the otelc binary in your Go bin directory ($(go env GOPATH)/bin by d
 # terminal A
 cd example/server
 otelc go build .
-set "OTEL_SERVICE_NAME=mcp-server" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && set "OTEL_LOG_LEVEL=info" && set "OTEL_METRICS_EXPORTER=console" && set "OTEL_GO_DISABLED_INSTRUMENTATIONS=runtimemetrics" && set "OTEL_GO_ENABLED_INSTRUMENTATIONS=MCP_SERVER" && server.exe
+set "OTEL_SERVICE_NAME=mcp-server" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && set "OTEL_LOG_LEVEL=debug" && set "OTEL_METRICS_EXPORTER=none" && set "OTEL_GO_DISABLED_INSTRUMENTATIONS=runtimemetrics" && server.exe
 
 # terminal B
 cd example/client
@@ -36,3 +36,7 @@ set "OTEL_SERVICE_NAME=mcp-client" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://lo
 - `otelc pin` command will generate `otelc.instrumentation.go` file in both client and server depending on the packages used that needs to be instrumented
 - need to manually add our custom `library` into the generated `otelc.instrumentation.go`
 - when `otelc.instrumentation.go` is added to import our custom library, then otelc will not automatically instrument the application, thats why need to use the `otelc pin`.
+
+```bash
+curl -X POST localhost:8090/call -d "{\"tool\":\"greet\",\"args\":{\"name\":\"HDFC\"}}"
+```

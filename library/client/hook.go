@@ -242,18 +242,32 @@ func clientProtocolMiddleware(
 
 		// IMPORTANT:
 		//
-		// Use the session span as a LOCAL parent.
+		// Use the session span as a LOCAL parent, but ONLY for the methods
+		// that make up the connect-time handshake (server/discover,
+		// initialize, notifications/initialized).
+		//
+		// Every operation issued after Connect has already returned (
+		// tools/call, tools/list, resources/read, ...) is a call the
+		// application makes explicitly with its own context, which may
+		// carry a meaningful, unrelated parent span (e.g. one HTTP request
+		// out of many served over the lifetime of a single long-lived
+		// session). Forcibly repinning that context onto the original
+		// mcp.session span would silently discard the caller's context and
+		// collapse every subsequent call back into one trace, regardless
+		// of when or why it was made.
 		//
 		// The previous implementation used:
 		//
 		//     trace.ContextWithRemoteSpanContext(...)
 		//
-		// That causes the client MCP operation span to have a remote parent
+		// That caused the client MCP operation span to have a remote parent
 		// even though both spans were created by the same process.
 		//
-		// This version correctly keeps the client-side hierarchy local.
+		// This version keeps the client-side hierarchy local, and scopes it
+		// to the handshake only.
 		if hasSessionEntry &&
-			sessionEntryValue.spanContext.IsValid() {
+			sessionEntryValue.spanContext.IsValid() &&
+			isSessionLifecycleMethod(method) {
 			ctx = trace.ContextWithSpanContext(
 				ctx,
 				sessionEntryValue.spanContext.WithRemote(false),
@@ -542,6 +556,23 @@ func shouldRecordSessionID(protocolVersion string) bool {
 	}
 
 	return protocolVersion != statelessMCPProtocolVersion
+}
+
+// isSessionLifecycleMethod reports whether method is part of the initial
+// MCP handshake performed inside Connect.
+//
+// Only these methods should be force-parented onto the long-lived
+// mcp.session span. Everything else is issued after Connect has already
+// returned and must respect whatever context the caller passed to it.
+func isSessionLifecycleMethod(method string) bool {
+	switch method {
+	case "server/discover",
+		"initialize",
+		"notifications/initialized":
+		return true
+	}
+
+	return false
 }
 
 // isToolResultError reports whether an MCP tools/call result represents a

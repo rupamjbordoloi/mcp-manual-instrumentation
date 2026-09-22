@@ -485,6 +485,7 @@ func serverProtocolMiddleware(
 				"",
 			)
 		}
+		logger.Debug("is recording...", "method", method, "span IsRecording", methodSpan.IsRecording())
 
 		return result, err
 	}

@@ -40,3 +40,18 @@ set "OTEL_SERVICE_NAME=mcp-client" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://lo
 ```bash
 curl -X POST localhost:8090/call -d "{\"tool\":\"greet\",\"args\":{\"name\":\"HDFC\"}}"
 ```
+
+```bash
+curl -X POST http://localhost:8090/call \
+  -H "Content-Type: application/json" \
+  -d '{"tools": [{"tool": "greet", "args": {"name": "HDFC"}}, {"tool": "bye", "args": {"name": "HDFC"}}]}'
+
+curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"greet\", \"args\": {\"name\": \"HDFC\"}}, {\"tool\": \"bye\", \"args\": {\"name\": \"HDFC\"}}]}"
+
+
+curl -X POST http://localhost:8090/call \
+  -H "Content-Type: application/json" \
+  -d '{"tools": [{"tool": "greet", "args": {"name": "HDFC"}}]}'
+
+curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"bye\", \"args\": {\"name\": \"HDFC\"}}]}"
+```

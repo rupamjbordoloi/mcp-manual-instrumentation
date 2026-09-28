@@ -18,6 +18,35 @@ mcp_server_new_server:
         after: AfterNewServer
         path: "library/server"
 
+# (*Server).Connect returns a new *mcp.ServerSession per inbound client
+# connection (unlike NewServer, which runs once for the whole process) —
+# the server-side symmetric counterpart to the client's mcp_client_connect.
+# Used to time mcp.server.session.duration (see hook.go).
+mcp_server_connect:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: Connect
+    recv: "*Server"
+  do:
+    - inject_hooks:
+        before: BeforeServerConnect
+        after: AfterServerConnect
+        path: "library/server"
+
+# Symmetric counterpart to mcp_server_connect / the client's
+# mcp_client_close: records mcp.server.session.duration when the session
+# this rule paired with mcp_server_connect actually ends.
+mcp_server_session_close:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: Close
+    recv: "*ServerSession"
+  do:
+    - inject_hooks:
+        before: BeforeServerSessionClose
+        after: AfterServerSessionClose
+        path: "library/server"
+
 # BeforeStreamableHTTP bridges the current HTTP server span into the
 # JSON-RPC request (see hook.go); serverProtocolMiddleware depends on that
 # bridge to correctly parent tools/call under its own HTTP request instead

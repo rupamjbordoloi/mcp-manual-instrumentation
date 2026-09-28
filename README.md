@@ -19,7 +19,7 @@ This places the otelc binary in your Go bin directory ($(go env GOPATH)/bin by d
 # terminal A
 cd example/server
 otelc go build .
-set "OTEL_SERVICE_NAME=mcp-server" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && set "OTEL_LOG_LEVEL=debug" && set "OTEL_METRICS_EXPORTER=none" && set "OTEL_GO_DISABLED_INSTRUMENTATIONS=runtimemetrics" && server.exe
+set "OTEL_SERVICE_NAME=mcp-server" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318" && set "OTEL_LOG_LEVEL=debug" && set "OTEL_METRICS_EXPORTER=otlp" && set "OTEL_GO_DISABLED_INSTRUMENTATIONS=runtimemetrics" && set "OTEL_METRIC_EXPORT_INTERVAL=1000" && server.exe
 
 # terminal B
 cd example/client

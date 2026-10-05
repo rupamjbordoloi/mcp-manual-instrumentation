@@ -38,7 +38,12 @@ set "OTEL_SERVICE_NAME=mcp-client" && set "OTEL_EXPORTER_OTLP_ENDPOINT=http://lo
 - when `otelc.instrumentation.go` is added to import our custom library, then otelc will not automatically instrument the application, thats why need to use the `otelc pin`.
 
 ```bash
-curl -X POST localhost:8090/call -d "{\"tool\":\"greet\",\"args\":{\"name\":\"HDFC\"}}"
+curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"greet\", \"args\": {\"name\": \"HDFC\"}}]}"
+
+curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"bye\", \"args\": {\"name\": \"HDFC\"}}]}"
+
+curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"greet\", \"args\": {\"name\": \"HDFC\"}}, {\"tool\": \"bye\", \"args\": {\"name\": \"HDFC\"}}]}"
+
 ```
 
 ```bash
@@ -54,4 +59,9 @@ curl -X POST http://localhost:8090/call \
   -d '{"tools": [{"tool": "greet", "args": {"name": "HDFC"}}]}'
 
 curl -X POST http://localhost:8090/call -H "Content-Type: application/json" -d "{\"tools\": [{\"tool\": \"bye\", \"args\": {\"name\": \"HDFC\"}}]}"
+```
+
+## View all metrics
+```bash
+{__name__=~".+"}
 ```

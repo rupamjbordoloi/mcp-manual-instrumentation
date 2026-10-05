@@ -129,6 +129,7 @@ func BeforeCallTool(
 	ictx.SetData(
 		map[string]any{
 			"span": span,
+			"tool": beginToolObservation(toolName),
 		},
 	)
 
@@ -149,6 +150,11 @@ func AfterCallTool(ictx hook.HookContext, res *mcp.CallToolResult, err error) {
 	if !ok || span == nil {
 		logger.Debug("AfterCallTool: no span from before hook")
 		return
+	}
+
+	// Record with the tool span in ctx so metric exemplars link to the trace.
+	if obs, ok := ictx.GetKeyData("tool").(toolObservation); ok {
+		obs.end(trace.ContextWithSpan(context.Background(), span), res, err)
 	}
 
 	switch {
@@ -192,7 +198,7 @@ func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 	}
 
 	initTracing()
-	initMetrics()
+	metrics()
 
 	logger.Debug("AfterNewServer: installing protocol middleware")
 
@@ -205,9 +211,9 @@ func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 // calls are named "tools/call <tool>" with gen_ai.tool.name/
 // gen_ai.operation.name set per the current MCP semantic conventions.
 //
-// It also records mcp.server.operation.duration (see hook_metrics.go),
-// reusing the same attribute set built for the span rather than
-// recomputing it, so tracing and metrics stay in lockstep.
+// It also records the per-operation metrics (see operationObservation in
+// metrics.go). They share resultErrorType with the span, so tracing and
+// metrics always agree on whether a request failed.
 func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		if !serverEnabler.Enable() {
@@ -307,28 +313,21 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			methodSpan.AddEvent("capability.enumeration")
 		}
 
-		start := recordOperationStart()
+		obs := beginOperation(method, toolName, protocolVersion, isHTTPMCPRequest(req))
 
 		result, err := next(ctx, method, req)
 
-		metricAttrs := attributes
+		errType := resultErrorType(result, err)
 
-		switch {
-		case err != nil:
-			metricAttrs = append(metricAttrs, attribute.String(attrErrorType, errorType(err)))
+		if err != nil {
 			finishSpan(methodSpan, err, "")
-
-		case isToolResultError(result):
+		} else {
 			// CallToolResult.IsError=true is a tool-level failure encoded
 			// inside an otherwise successful JSON-RPC response.
-			metricAttrs = append(metricAttrs, attribute.String(attrErrorType, toolErrorType))
-			finishSpan(methodSpan, nil, toolErrorType)
-
-		default:
-			finishSpan(methodSpan, nil, "")
+			finishSpan(methodSpan, nil, errType)
 		}
 
-		recordOperationDuration(ctx, start, metricAttrs)
+		obs.end(ctx, errType)
 
 		return result, err
 	}

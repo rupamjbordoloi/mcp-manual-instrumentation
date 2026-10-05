@@ -79,6 +79,22 @@ func isToolResultError(result mcp.Result) bool {
 	return ok && callResult != nil && callResult.IsError
 }
 
+// resultErrorType classifies the outcome of a handled MCP request as a
+// low-cardinality error.type value, or "" on success. It is the single
+// definition shared by spans and metrics so the two never disagree.
+func resultErrorType(result mcp.Result, err error) string {
+	switch {
+	case err != nil:
+		return errorType(err)
+
+	case isToolResultError(result):
+		return toolErrorType
+
+	default:
+		return ""
+	}
+}
+
 // requestProtocolVersion obtains the MCP protocol version without relying on
 // private fields from the SDK.
 //

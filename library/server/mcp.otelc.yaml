@@ -47,6 +47,36 @@ mcp_server_session_close:
         after: AfterServerSessionClose
         path: "library/server"
 
+# Records every tool name registered on a server. Client-supplied tool names
+# are only used as metric attributes when they match a registered tool,
+# which keeps mcp.tool.* metric cardinality bounded. The generic mcp.AddTool
+# calls this method, so one rule covers both registration paths.
+mcp_server_add_tool:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: AddTool
+    recv: "*Server"
+  do:
+    - inject_hooks:
+        before: BeforeServerAddTool
+        after: AfterServerAddTool
+        path: "library/server"
+
+# Outer HTTP handler: sees every request, including ones rejected before they
+# reach a session. Feeds mcp.transport.errors.total and mcp.message.size.
+# (mcp_server_streamable_http_request below hooks the inner per-session
+# transport for trace-context bridging instead.)
+mcp_server_transport_request:
+  target: github.com/modelcontextprotocol/go-sdk/mcp
+  where:
+    func: ServeHTTP
+    recv: "*StreamableHTTPHandler"
+  do:
+    - inject_hooks:
+        before: BeforeTransportRequest
+        after: AfterTransportRequest
+        path: "library/server"
+
 # BeforeStreamableHTTP bridges the current HTTP server span into the
 # JSON-RPC request (see hook.go); serverProtocolMiddleware depends on that
 # bridge to correctly parent tools/call under its own HTTP request instead

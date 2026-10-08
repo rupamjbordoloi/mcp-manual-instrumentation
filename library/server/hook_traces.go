@@ -126,10 +126,14 @@ func BeforeCallTool(
 		trace.WithAttributes(attributes...),
 	)
 
+	// req.Params.Arguments is json.RawMessage: the exact wire bytes of the
+	// call's arguments, with no marshaling needed to size it.
+	requestSize := int64(len(req.Params.Arguments))
+
 	ictx.SetData(
 		map[string]any{
 			"span": span,
-			"tool": beginToolObservation(toolName),
+			"tool": beginToolObservation(toolName, requestSize),
 		},
 	)
 

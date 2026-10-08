@@ -20,8 +20,8 @@ import (
 // operation and tool observations for the two hooks it shares with tracing.
 
 // serverSessionStart records when each *mcp.ServerSession was created
-// (AfterServerConnect), so the close hooks can compute
-// mcp.server.session.duration and balance mcp.session.active.
+// (AfterServerConnect), so the close hooks can compute mcp.session.duration
+// and balance mcp.session.active.
 var serverSessionStart sync.Map // map[*mcp.ServerSession]time.Time
 
 // ---- Server session hooks ----
@@ -44,8 +44,9 @@ func BeforeServerConnect(
 	ictx.SetData(map[string]any{"start": time.Now()})
 }
 
-// AfterServerConnect stores the start time against the new session and
-// counts it as active. Both are undone in AfterServerSessionClose.
+// AfterServerConnect stores the start time against the new session, counts
+// it as active, and records its creation. Active is undone in
+// AfterServerSessionClose; created/closed are independent running totals.
 func AfterServerConnect(ictx hook.HookContext, session *mcp.ServerSession, err error) {
 	if err != nil || session == nil {
 		return
@@ -58,7 +59,11 @@ func AfterServerConnect(ictx hook.HookContext, session *mcp.ServerSession, err e
 	}
 
 	serverSessionStart.Store(session, start)
-	metrics().sessionActive.Add(context.Background(), 1)
+
+	m := metrics()
+	ctx := context.Background()
+	m.sessionActive.Add(ctx, 1)
+	m.sessionCreated.Add(ctx, 1)
 }
 
 // BeforeServerSessionClose looks up the start time AfterServerConnect
@@ -80,8 +85,8 @@ func BeforeServerSessionClose(ictx hook.HookContext, recv *mcp.ServerSession) {
 	ictx.SetData(map[string]any{"start": start})
 }
 
-// AfterServerSessionClose records mcp.server.session.duration and takes the
-// session out of mcp.session.active.
+// AfterServerSessionClose records mcp.session.duration and mcp.session.closed,
+// and takes the session out of mcp.session.active.
 //
 // The MCP semantic conventions also list jsonrpc.protocol.version,
 // mcp.protocol.version, network.protocol.name/version, and
@@ -105,6 +110,7 @@ func AfterServerSessionClose(ictx hook.HookContext, err error) {
 	ctx := context.Background()
 	m.sessionDuration.Record(ctx, time.Since(start).Seconds(), metric.WithAttributes(attrs...))
 	m.sessionActive.Add(ctx, -1)
+	m.sessionClosed.Add(ctx, 1)
 
 	logger.Debug("AfterServerSessionClose: recorded session metrics")
 }

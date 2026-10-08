@@ -1098,7 +1098,22 @@ platform rather than hard-coded into the application.
 
 # 29. Metrics
 
-> **TBD**
+- `mcp.server.operation.duration`(Histogram): MCP request or notification duration as observed on the receiver from the time it was received until the result or ack is sent.
+- `mcp.tool.invocation.total`(Counter): Number of MCP tool invocations, successful or not.
+- `mcp.tool.invocation.success`(Counter): Number of MCP tool invocations that completed without a protocol error or an error response.
+- `mcp.tool.invocation.failure`(Counter): Number of MCP tool invocations that failed, either with a protocol error or an error response.
+- `mcp.tool.invocation.duration`(Histogram): Duration of MCP tool execution on the server.
+- `mcp.tool.request.message.size`(Histogram): Size in bytes of a tools/call request's arguments, as received over the wire.
+- `mcp.tool.response.message.size`(Histogram): Size in bytes of a tools/call response as returned by the tool handler, JSON-encoded.
+- `mcp.session.created`(Counter): Number of MCP sessions created on the server.
+- `mcp.session.closed`(Counter): Number of MCP sessions closed on the server.
+- `mcp.session.active`(Gauge): Number of MCP sessions currently active on the server.
+- `mcp.session.request`(Counter): Number of MCP requests handled, excluding notifications, by method.
+- `mcp.session.duration`(Histogram): The duration of the MCP session as observed on the MCP server.
+- `mcp.transport.errors.total`(Counter): Number of MCP transport requests that completed with an HTTP status of 400 or above.
+- `mcp.server.error`(Counter): Number of MCP requests, of any method, that failed with a protocol error or an error response.
+- `mcp.message.size`(Histogram): Size in bytes of the MCP message bodies exchanged over the Streamable HTTP transport, by direction. Sent sizes include SSE framing.
+- `mcp.resource.reads.total`(Counter): Number of MCP resources/read requests.
 
 The following information should be added to this section:
 

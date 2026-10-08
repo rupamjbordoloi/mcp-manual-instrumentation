@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -61,17 +62,27 @@ var (
 type serverMetrics struct {
 	// MCP semantic-convention metrics.
 	operationDuration metric.Float64Histogram // mcp.server.operation.duration
-	sessionDuration   metric.Float64Histogram // mcp.server.session.duration
 
 	// Tool execution.
-	toolInvocations metric.Int64Counter     // mcp.tool.invocations.total
-	toolDuration    metric.Float64Histogram // mcp.tool.duration
-	toolErrors      metric.Int64Counter     // mcp.tool.errors.total
+	toolInvocationTotal    metric.Int64Counter     // mcp.tool.invocation.total
+	toolInvocationSuccess  metric.Int64Counter     // mcp.tool.invocation.success
+	toolInvocationFailure  metric.Int64Counter     // mcp.tool.invocation.failure
+	toolInvocationRetry    metric.Int64Counter     // mcp.tool.invocation.retry (see RecordToolInvocationRetry)
+	toolInvocationDuration metric.Float64Histogram // mcp.tool.invocation.duration
+	toolRequestSize        metric.Int64Histogram   // mcp.tool.request.message.size
+	toolResponseSize       metric.Int64Histogram   // mcp.tool.response.message.size
+
+	// Session lifecycle.
+	sessionCreated  metric.Int64Counter       // mcp.session.created
+	sessionClosed   metric.Int64Counter       // mcp.session.closed
+	sessionActive   metric.Int64UpDownCounter // mcp.session.active
+	sessionRequest  metric.Int64Counter       // mcp.session.request
+	sessionDuration metric.Float64Histogram   // mcp.session.duration
 
 	// Transport and protocol layer.
-	transportErrors metric.Int64Counter       // mcp.transport.errors.total
-	sessionActive   metric.Int64UpDownCounter // mcp.session.active
-	messageSize     metric.Int64Histogram     // mcp.message.size
+	transportErrors metric.Int64Counter   // mcp.transport.errors.total
+	serverError     metric.Int64Counter   // mcp.server.error
+	messageSize     metric.Int64Histogram // mcp.message.size
 
 	// Agentic accounting.
 	resourceReads metric.Int64Counter // mcp.resource.reads.total
@@ -103,22 +114,41 @@ func newServerMetrics(meter metric.Meter) *serverMetrics {
 		operationDuration: floatHistogram(meter, "mcp.server.operation.duration", "s",
 			"MCP request or notification duration as observed on the receiver from the time it was received until the result or ack is sent.",
 			durationBuckets),
-		sessionDuration: floatHistogram(meter, "mcp.server.session.duration", "s",
+
+		toolInvocationTotal: counter(meter, "mcp.tool.invocation.total", "{invocation}",
+			"Number of MCP tool invocations, successful or not."),
+		toolInvocationSuccess: counter(meter, "mcp.tool.invocation.success", "{invocation}",
+			"Number of MCP tool invocations that completed without a protocol error or an isError result."),
+		toolInvocationFailure: counter(meter, "mcp.tool.invocation.failure", "{invocation}",
+			"Number of MCP tool invocations that failed, either with a protocol error or an isError result."),
+		toolInvocationRetry: counter(meter, "mcp.tool.invocation.retry", "{retry}",
+			"Number of MCP tool invocation retries. Not incremented automatically; see RecordToolInvocationRetry."),
+		toolInvocationDuration: floatHistogram(meter, "mcp.tool.invocation.duration", "s",
+			"Duration of MCP tool execution on the server.",
+			durationBuckets),
+		toolRequestSize: intHistogram(meter, "mcp.tool.request.message.size", "By",
+			"Size in bytes of a tools/call request's arguments, as received over the wire.",
+			messageSizeBuckets),
+		toolResponseSize: intHistogram(meter, "mcp.tool.response.message.size", "By",
+			"Size in bytes of a tools/call response as returned by the tool handler, JSON-encoded.",
+			messageSizeBuckets),
+
+		sessionCreated: counter(meter, "mcp.session.created", "{session}",
+			"Number of MCP sessions created on the server."),
+		sessionClosed: counter(meter, "mcp.session.closed", "{session}",
+			"Number of MCP sessions closed on the server."),
+		sessionActive: upDownCounter(meter, "mcp.session.active", "{session}",
+			"Number of MCP sessions currently active on the server."),
+		sessionRequest: counter(meter, "mcp.session.request", "{request}",
+			"Number of MCP requests handled, excluding notifications, by method."),
+		sessionDuration: floatHistogram(meter, "mcp.session.duration", "s",
 			"The duration of the MCP session as observed on the MCP server.",
 			durationBuckets),
 
-		toolInvocations: counter(meter, "mcp.tool.invocations.total", "{invocation}",
-			"Number of MCP tool invocations, successful or not."),
-		toolDuration: floatHistogram(meter, "mcp.tool.duration", "s",
-			"Duration of MCP tool execution on the server.",
-			durationBuckets),
-		toolErrors: counter(meter, "mcp.tool.errors.total", "{error}",
-			"Number of MCP tool invocations that failed, either with a protocol error or an isError result."),
-
 		transportErrors: counter(meter, "mcp.transport.errors.total", "{error}",
 			"Number of MCP transport requests that completed with an HTTP status of 400 or above."),
-		sessionActive: upDownCounter(meter, "mcp.session.active", "{session}",
-			"Number of MCP sessions currently active on the server."),
+		serverError: counter(meter, "mcp.server.error", "{error}",
+			"Number of MCP requests, of any method, that failed with a protocol error or an isError result."),
 		messageSize: intHistogram(meter, "mcp.message.size", "By",
 			"Size in bytes of the MCP message bodies exchanged over the Streamable HTTP transport, by direction. Sent sizes include SSE framing.",
 			messageSizeBuckets),
@@ -284,14 +314,24 @@ func beginOperation(method, toolName, protocolVersion string, overHTTP bool) ope
 	return operationObservation{start: time.Now(), method: method, toolName: tool, attrs: attrs}
 }
 
-// end records mcp.server.operation.duration, and for the methods that
-// have one, mcp.resource.reads.total and mcp.tokens.consumed. errType is ""
-// on success (see resultErrorType).
+// end records mcp.server.operation.duration, mcp.session.request, and, on
+// failure, mcp.server.error — all for any method, not just tools/call. For
+// the methods that have one, it also records mcp.resource.reads.total and
+// mcp.tokens.consumed. errType is "" on success (see resultErrorType).
 func (o operationObservation) end(ctx context.Context, errType string) {
 	m := metrics()
 
 	m.operationDuration.Record(ctx, time.Since(o.start).Seconds(),
 		metric.WithAttributes(withErrorType(o.attrs, errType)...))
+
+	m.sessionRequest.Add(ctx, 1, metric.WithAttributes(attribute.String(attrMCPMethodName, o.method)))
+
+	if errType != "" {
+		m.serverError.Add(ctx, 1, metric.WithAttributes(
+			attribute.String(attrMCPMethodName, o.method),
+			attribute.String(attrErrorType, errType),
+		))
+	}
 
 	if o.method == methodResourcesRead {
 		m.resourceReads.Add(ctx, 1, metric.WithAttributes(withErrorType(nil, errType)...))
@@ -310,22 +350,27 @@ func (o operationObservation) tokenAttributes() []attribute.KeyValue {
 	return attrs
 }
 
-// ---- Tool execution: invocations, duration, errors ----
+// ---- Tool execution: invocations, duration, errors, message size ----
 
 // toolObservation measures one (*Server).callTool invocation, from
 // BeforeCallTool to AfterCallTool.
 type toolObservation struct {
-	start time.Time
-	name  string // already bounded via metricToolName
+	start       time.Time
+	name        string // already bounded via metricToolName
+	requestSize int64  // bytes of the raw tools/call arguments
 }
 
-func beginToolObservation(name string) toolObservation {
-	return toolObservation{start: time.Now(), name: metricToolName(name)}
+// beginToolObservation starts a toolObservation. requestSize should be
+// len(req.Params.Arguments) — the raw wire bytes of the call's arguments —
+// captured in BeforeCallTool before the handler runs.
+func beginToolObservation(name string, requestSize int64) toolObservation {
+	return toolObservation{start: time.Now(), name: metricToolName(name), requestSize: requestSize}
 }
 
-// end records mcp.tool.invocations.total, mcp.tool.duration and, on
-// failure, mcp.tool.errors.total. A tool fails either by returning a Go /
-// JSON-RPC error or by returning a result with isError=true.
+// end records mcp.tool.invocation.total/.success/.failure,
+// mcp.tool.invocation.duration, and mcp.tool.{request,response}.message.size.
+// A tool fails either by returning a Go/JSON-RPC error or by returning a
+// result with isError=true.
 func (o toolObservation) end(ctx context.Context, res *mcp.CallToolResult, err error) {
 	m := metrics()
 
@@ -335,10 +380,49 @@ func (o toolObservation) end(ctx context.Context, res *mcp.CallToolResult, err e
 		errType,
 	)...)
 
-	m.toolInvocations.Add(ctx, 1, opts)
-	m.toolDuration.Record(ctx, time.Since(o.start).Seconds(), opts)
+	m.toolInvocationTotal.Add(ctx, 1, opts)
+	m.toolInvocationDuration.Record(ctx, time.Since(o.start).Seconds(), opts)
 
 	if errType != "" {
-		m.toolErrors.Add(ctx, 1, opts)
+		m.toolInvocationFailure.Add(ctx, 1, opts)
+	} else {
+		m.toolInvocationSuccess.Add(ctx, 1, opts)
 	}
+
+	toolAttr := metric.WithAttributes(attribute.String(attrGenAIToolName, o.name))
+
+	m.toolRequestSize.Record(ctx, o.requestSize, toolAttr)
+
+	// res can be nil when the call failed before producing a result (e.g.
+	// unknown tool name); there is then no response body to measure.
+	if res != nil {
+		m.toolResponseSize.Record(ctx, jsonSize(res), toolAttr)
+	}
+}
+
+// RecordToolInvocationRetry records one retry of a tool invocation.
+//
+// Nothing in this package calls this automatically. The MCP SDK does not
+// expose the JSON-RPC request ID to hook code — it is only available via an
+// unexported context key internal to package mcp — so a client's retry of
+// the exact same request cannot be reliably distinguished here from a new,
+// unrelated call to the same tool. If retry logic lives inside a tool
+// handler itself (for example, retrying a call to a backend service), that
+// handler can call this directly to report it.
+func RecordToolInvocationRetry(ctx context.Context, toolName string) {
+	metrics().toolInvocationRetry.Add(ctx, 1, metric.WithAttributes(
+		attribute.String(attrGenAIToolName, metricToolName(toolName)),
+	))
+}
+
+// jsonSize returns the byte length of v JSON-encoded, or 0 if it cannot be
+// marshaled (which should not happen for an SDK result type).
+func jsonSize(v any) int64 {
+	b, err := json.Marshal(v)
+	if err != nil {
+		logger.Debug("jsonSize: marshal failed", "error", err)
+		return 0
+	}
+
+	return int64(len(b))
 }

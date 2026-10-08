@@ -67,7 +67,6 @@ type serverMetrics struct {
 	toolInvocationTotal    metric.Int64Counter     // mcp.tool.invocation.total
 	toolInvocationSuccess  metric.Int64Counter     // mcp.tool.invocation.success
 	toolInvocationFailure  metric.Int64Counter     // mcp.tool.invocation.failure
-	toolInvocationRetry    metric.Int64Counter     // mcp.tool.invocation.retry (see RecordToolInvocationRetry)
 	toolInvocationDuration metric.Float64Histogram // mcp.tool.invocation.duration
 	toolRequestSize        metric.Int64Histogram   // mcp.tool.request.message.size
 	toolResponseSize       metric.Int64Histogram   // mcp.tool.response.message.size
@@ -121,8 +120,6 @@ func newServerMetrics(meter metric.Meter) *serverMetrics {
 			"Number of MCP tool invocations that completed without a protocol error or an isError result."),
 		toolInvocationFailure: counter(meter, "mcp.tool.invocation.failure", "{invocation}",
 			"Number of MCP tool invocations that failed, either with a protocol error or an isError result."),
-		toolInvocationRetry: counter(meter, "mcp.tool.invocation.retry", "{retry}",
-			"Number of MCP tool invocation retries. Not incremented automatically; see RecordToolInvocationRetry."),
 		toolInvocationDuration: floatHistogram(meter, "mcp.tool.invocation.duration", "s",
 			"Duration of MCP tool execution on the server.",
 			durationBuckets),
@@ -398,21 +395,6 @@ func (o toolObservation) end(ctx context.Context, res *mcp.CallToolResult, err e
 	if res != nil {
 		m.toolResponseSize.Record(ctx, jsonSize(res), toolAttr)
 	}
-}
-
-// RecordToolInvocationRetry records one retry of a tool invocation.
-//
-// Nothing in this package calls this automatically. The MCP SDK does not
-// expose the JSON-RPC request ID to hook code — it is only available via an
-// unexported context key internal to package mcp — so a client's retry of
-// the exact same request cannot be reliably distinguished here from a new,
-// unrelated call to the same tool. If retry logic lives inside a tool
-// handler itself (for example, retrying a call to a backend service), that
-// handler can call this directly to report it.
-func RecordToolInvocationRetry(ctx context.Context, toolName string) {
-	metrics().toolInvocationRetry.Add(ctx, 1, metric.WithAttributes(
-		attribute.String(attrGenAIToolName, metricToolName(toolName)),
-	))
 }
 
 // jsonSize returns the byte length of v JSON-encoded, or 0 if it cannot be

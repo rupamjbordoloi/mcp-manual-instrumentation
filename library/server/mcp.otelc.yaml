@@ -101,7 +101,7 @@ mcp_server_streamable_http_request:
 # (WithTracerProvider(noop...) disables otelhttp's own span creation, since
 # tracing already comes from mcp_server_streamable_http_request above).
 http_metrics_wrap:
-  target: $root
+  target: "**"
   where:
     function_call: github.com/modelcontextprotocol/go-sdk/mcp.NewStreamableHTTPHandler
   do:

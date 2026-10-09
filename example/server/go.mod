@@ -8,6 +8,7 @@ tool go.opentelemetry.io/otelc/tool/cmd/otelc
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/log v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otelc/instrumentation/log/slog v0.0.0-00010101000000-000000000000
@@ -23,6 +24,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dave/dst v0.27.4 // indirect
+	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect

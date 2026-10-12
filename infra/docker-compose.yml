@@ -30,7 +30,7 @@ services:
 
     depends_on:
       - tempo
-      # - loki
+      - loki
 
   # Prometheus Backend (Metrics)
   prometheus:
@@ -80,3 +80,14 @@ services:
     depends_on:
       - prometheus
       - tempo
+      - loki
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./configs/loki-config.yaml:/etc/loki/local-config.yaml
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"

@@ -8,7 +8,9 @@ package tools
 
 import (
 	_ "library/server"
+
 	_ "go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init"
+	// _ "go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace"
 	_ "go.opentelemetry.io/otelc/instrumentation/log"
 	_ "go.opentelemetry.io/otelc/instrumentation/log/slog"
 	_ "go.opentelemetry.io/otelc/instrumentation/net/http/client"

@@ -17,17 +17,14 @@ import (
 	"go.opentelemetry.io/otelc/pkg/runtime"
 )
 
-var (
-	tracerOnce sync.Once
-	tracer     trace.Tracer
-)
+// tracer returns this package's tracer, creating it on first use. Call sites
+// ask for it where they start a span, so nothing has to remember to initialise
+// it first and a hook that never starts a span never touches it.
+var tracer = sync.OnceValue(func() trace.Tracer {
+	logger.Info("MCP server trace instrumentation initialized")
 
-func initTracing() {
-	tracerOnce.Do(func() {
-		tracer = otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(runtime.ModuleVersion()))
-		logger.Info("MCP server trace instrumentation initialized")
-	})
-}
+	return otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(runtime.ModuleVersion()))
+})
 
 // finishSpan finishes an OpenTelemetry span.
 //
@@ -86,8 +83,6 @@ func BeforeCallTool(
 		return
 	}
 
-	initTracing()
-
 	toolName := req.Params.Name
 	protocolVersion := requestProtocolVersion(req)
 	sessionID := requestSessionID(req)
@@ -119,7 +114,7 @@ func BeforeCallTool(
 
 	appendMCPContextAttributes(&attributes, protocolVersion, sessionID)
 
-	newCtx, span := tracer.Start(
+	newCtx, span := tracer().Start(
 		ctx,
 		"tool."+toolName,
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -201,9 +196,6 @@ func AfterNewServer(ictx hook.HookContext, s *mcp.Server) {
 		return
 	}
 
-	initTracing()
-	metrics()
-
 	logger.Debug("AfterNewServer: installing protocol middleware")
 
 	s.AddReceivingMiddleware(serverProtocolMiddleware)
@@ -223,8 +215,6 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if !serverEnabler.Enable() {
 			return next(ctx, method, req)
 		}
-
-		initTracing()
 
 		if isNotification(method) {
 			return next(ctx, method, req)
@@ -285,7 +275,7 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			)
 		}
 
-		ctx, methodSpan := tracer.Start(
+		ctx, methodSpan := tracer().Start(
 			ctx,
 			spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
@@ -337,6 +327,43 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
+// httpServerSpanContext returns the span context of the HTTP server span for
+// the request being handled.
+//
+// The request context is not a reliable source. The otelhttp handler that
+// http_metrics_wrap puts around the MCP handler extracts the incoming
+// traceparent again, which replaces the server span in the context with the
+// client's span, and its no-op tracer leaves that in place. Bridging it would
+// make the MCP span a sibling of the HTTP server span instead of its child.
+//
+// The span active on the goroutine is still the server span, because otelc's
+// net/http instrumentation started it there, so it is preferred. The request
+// context is the fallback for when goroutine-local storage is unavailable.
+func httpServerSpanContext(ctx context.Context) trace.SpanContext {
+	if span := runtime.GetSpanFromGLS(); span != nil {
+		if sc := span.SpanContext(); sc.IsValid() {
+			return sc
+		}
+	}
+
+	// An older instrumentation module registers GetTraceAndSpanID but not
+	// GetSpanFromGLS, in which case the call above always returns nil.
+	if traceHex, spanHex := runtime.GetTraceAndSpanID(); traceHex != "" && spanHex != "" {
+		traceID, traceErr := trace.TraceIDFromHex(traceHex)
+		spanID, spanErr := trace.SpanIDFromHex(spanHex)
+
+		if traceErr == nil && spanErr == nil {
+			return trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    traceID,
+				SpanID:     spanID,
+				TraceFlags: trace.FlagsSampled,
+			})
+		}
+	}
+
+	return trace.SpanContextFromContext(ctx)
+}
+
 // BeforeStreamableHTTP runs once per inbound HTTP request (this is
 // (*StreamableServerTransport).ServeHTTP — see mcp.otelc.yaml) and copies
 // the current HTTP traceparent into the request's RequestExtra.Header via
@@ -354,8 +381,6 @@ func BeforeStreamableHTTP(
 		return
 	}
 
-	initTracing()
-
 	// Only bridge POST requests. GET is the long-lived streaming transport
 	// connection and should not be used as the parent for individual MCP
 	// operations.
@@ -363,11 +388,9 @@ func BeforeStreamableHTTP(
 		return
 	}
 
-	// This context contains the HTTP server span created by the net/http
-	// auto-instrumentation.
 	httpCtx := req.Context()
 
-	sc := trace.SpanContextFromContext(httpCtx)
+	sc := httpServerSpanContext(httpCtx)
 	if !sc.IsValid() {
 		logger.Debug("BeforeStreamableHTTP: no valid HTTP server span")
 		return
@@ -378,7 +401,7 @@ func BeforeStreamableHTTP(
 	// for the corresponding JSON-RPC request.
 	carrier := propagation.MapCarrier{}
 
-	otel.GetTextMapPropagator().Inject(httpCtx, carrier)
+	otel.GetTextMapPropagator().Inject(trace.ContextWithSpanContext(httpCtx, sc), carrier)
 
 	traceparent := carrier.Get("traceparent")
 	if traceparent == "" {

@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,7 +21,7 @@ import (
 
 const (
 	instrumentationName = "go.opentelemetry.io/otelc/instrumentation/mcp/client"
-	instrumentationKey  = "MCP_CLIENT"
+	instrumentationKey  = "MCP"
 
 	// OpenTelemetry MCP / JSON-RPC semantic-convention attributes.
 	attrMCPMethodName      = "mcp.method.name"
@@ -56,64 +57,66 @@ const (
 	mcpProtocolVersionMetaKey = "io.modelcontextprotocol/protocolVersion"
 )
 
-var (
-	logger   = runtime.Logger()
-	tracer   trace.Tracer
-	initOnce sync.Once
+var logger = runtime.Logger()
 
-	// shutdownTracer and shutdownProvider back mcp.session and mcp.shutdown
-	// specifically. Both spans straddle process termination: mcp.session is
-	// created at startup but only ends after Close(), and mcp.shutdown is
-	// created and ended entirely inside the signal-triggered shutdown path.
-	//
-	// The runtime package installs its own SIGINT/SIGTERM handler as a
-	// safety net for applications that don't flush on their own (see
-	// pkg/runtime/setup.go). It races this package's own graceful shutdown
-	// and, since it shuts down the global TracerProvider it owns, any span
-	// still open when it wins that race is silently dropped — we can't
-	// change that behavior without modifying that package.
-	//
-	// What we can do instead: give these two spans their own TracerProvider,
-	// with a synchronous (non-batching) exporter, so their entire lifecycle
-	// is independent of the global provider and is never affected by
-	// whether or when the runtime package shuts that one down.
-	shutdownTracer   trace.Tracer
-	shutdownProvider *sdktrace.TracerProvider
-)
+// tracer returns the client's tracer, creating it on first use. Call sites ask
+// for it where they start a span, so nothing has to remember to initialise it
+// first.
+var tracer = sync.OnceValue(func() trace.Tracer {
+	logger.Info("MCP client instrumentation initialized")
 
-func initInstrumentation() {
-	initOnce.Do(func() {
-		tracer = otel.GetTracerProvider().Tracer(
-			instrumentationName,
-			trace.WithInstrumentationVersion(runtime.ModuleVersion()),
-		)
+	return otel.GetTracerProvider().Tracer(
+		instrumentationName,
+		trace.WithInstrumentationVersion(runtime.ModuleVersion()),
+	)
+})
 
-		shutdownTracer = newShutdownTracer()
+// shutdownTracer backs mcp.session and mcp.shutdown specifically, and is
+// created on first use like tracer. Both spans straddle process termination:
+// mcp.session is created at startup but only ends after Close(), and
+// mcp.shutdown is created and ended entirely inside the signal-triggered
+// shutdown path.
+//
+// The runtime package installs its own SIGINT/SIGTERM handler as a safety net
+// for applications that don't flush on their own (see pkg/runtime/setup.go).
+// It races this package's own graceful shutdown and, since it shuts down the
+// global TracerProvider it owns, any span still open when it wins that race is
+// silently dropped; we can't change that behavior without modifying that
+// package.
+//
+// What we can do instead: give these two spans their own TracerProvider, with
+// a synchronous (non-batching) exporter, so their entire lifecycle is
+// independent of the global provider and is never affected by whether or when
+// the runtime package shuts that one down.
+var shutdownTracer = sync.OnceValue(newShutdownTracer)
 
-		logger.Info("MCP client instrumentation initialized")
-	})
-}
+// shutdownProvider is the provider behind shutdownTracer, kept so AfterMain
+// can release its exporter. It stays nil if shutdownTracer was never used or
+// fell back to the shared tracer.
+var shutdownProvider atomic.Pointer[sdktrace.TracerProvider]
 
 // newShutdownTracer builds a small, self-contained TracerProvider using a
-// synchronous exporter (sdktrace.WithSyncer): every span export happens
-// inline inside span.End(), with no background batching goroutine for a
-// signal handler to shut down out from under us. It uses the same
+// synchronous exporter (sdktrace.WithSyncer): every span export happens inline
+// inside span.End(), with no background batching goroutine for a signal
+// handler to shut down out from under us. It uses the same
 // OTEL_TRACES_EXPORTER-driven exporter selection as the runtime package
 // (autoexport), so it ships to the same destination.
 //
-// Falls back to the regular tracer if construction fails, so a shutdown
-// span is still created (even if export can't be guaranteed) rather than
-// leaving shutdownTracer nil.
+// Falls back to the regular tracer if construction fails, so a shutdown span
+// is still created (even if export can't be guaranteed) rather than leaving
+// shutdownTracer nil.
 func newShutdownTracer() trace.Tracer {
 	exporter, err := autoexport.NewSpanExporter(context.Background())
 	if err != nil {
 		logger.Warn("failed to create dedicated shutdown-span exporter, falling back to the shared tracer", "error", err)
-		return tracer
+
+		return tracer()
 	}
 
-	shutdownProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	shutdownProvider.Store(provider)
 
-	return shutdownProvider.Tracer(
+	return provider.Tracer(
 		instrumentationName,
 		trace.WithInstrumentationVersion(runtime.ModuleVersion()),
 	)
@@ -192,8 +195,6 @@ func AfterNewClient(ictx hook.HookContext, c *mcp.Client) {
 		return
 	}
 
-	initInstrumentation()
-
 	logger.Debug("AfterNewClient: installing protocol middleware")
 
 	c.AddSendingMiddleware(clientProtocolMiddleware)
@@ -214,8 +215,6 @@ func clientProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if !clientEnabler.Enable() {
 			return next(ctx, method, req)
 		}
-
-		initInstrumentation()
 
 		// Resolve the ClientSession associated with the outbound request.
 		var (
@@ -274,7 +273,7 @@ func clientProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			)
 		}
 
-		ctx, methodSpan := tracer.Start(
+		ctx, methodSpan := tracer().Start(
 			ctx,
 			spanName,
 			trace.WithSpanKind(trace.SpanKindClient),
@@ -527,11 +526,9 @@ func BeforeConnect(
 		return
 	}
 
-	initInstrumentation()
-
 	logger.Debug("BeforeConnect called")
 
-	sessionCtx, sessionSpan := shutdownTracer.Start(
+	sessionCtx, sessionSpan := shutdownTracer().Start(
 		ctx,
 		"mcp.session",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -626,8 +623,6 @@ func BeforeClose(ictx hook.HookContext, recv *mcp.ClientSession) {
 		return
 	}
 
-	initInstrumentation()
-
 	val, ok := sessionParentCtx.Load(recv)
 	if !ok {
 		logger.Debug("BeforeClose: no session entry")
@@ -651,7 +646,7 @@ func BeforeClose(ictx hook.HookContext, recv *mcp.ClientSession) {
 		entry.spanContext.WithRemote(false),
 	)
 
-	_, shutdownSpan := shutdownTracer.Start(
+	_, shutdownSpan := shutdownTracer().Start(
 		shutdownCtx,
 		"mcp.shutdown",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -733,8 +728,8 @@ func AfterMain(ictx hook.HookContext) {
 	// mcp.session/mcp.shutdown were already synchronously exported when
 	// End() was called (sdktrace.WithSyncer), so this only releases the
 	// dedicated exporter's own resources (e.g. its HTTP connection).
-	if shutdownProvider != nil {
-		if err := shutdownProvider.Shutdown(ctx); err != nil {
+	if provider := shutdownProvider.Load(); provider != nil {
+		if err := provider.Shutdown(ctx); err != nil {
 			logger.Error("error shutting down dedicated shutdown-span provider", "error", err)
 		}
 	}

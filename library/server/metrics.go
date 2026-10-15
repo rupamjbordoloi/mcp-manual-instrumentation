@@ -60,7 +60,7 @@ var (
 // that fail to build are replaced by no-ops, so recording code never needs
 // nil checks.
 type serverMetrics struct {
-	// MCP semantic-convention metrics.
+	// MCP semantic-convention metric.
 	operationDuration metric.Float64Histogram // mcp.server.operation.duration
 
 	// Tool execution.
@@ -87,26 +87,19 @@ type serverMetrics struct {
 	resourceReads metric.Int64Counter // mcp.resource.reads.total
 }
 
-var (
-	metricsOnce sync.Once
-	instruments *serverMetrics
-)
+// metrics returns the instruments, creating them on first use. The meter is
+// resolved then rather than at start-up so the runtime has had the chance to
+// install its MeterProvider first.
+var metrics = sync.OnceValue(func() *serverMetrics {
+	meter := otel.GetMeterProvider().Meter(
+		instrumentationName,
+		metric.WithInstrumentationVersion(runtime.ModuleVersion()),
+	)
 
-// metrics returns the lazily created instruments. The meter is resolved on
-// first use rather than at init so the runtime has a chance to install its
-// MeterProvider first.
-func metrics() *serverMetrics {
-	metricsOnce.Do(func() {
-		meter := otel.GetMeterProvider().Meter(
-			instrumentationName,
-			metric.WithInstrumentationVersion(runtime.ModuleVersion()),
-		)
-		instruments = newServerMetrics(meter)
-		logger.Info("MCP server metric instrumentation initialized")
-	})
+	logger.Info("MCP server metric instrumentation initialized")
 
-	return instruments
-}
+	return newServerMetrics(meter)
+})
 
 func newServerMetrics(meter metric.Meter) *serverMetrics {
 	return &serverMetrics{

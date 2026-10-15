@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/contrib/bridges/otelslog"
+	zlog "github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 )
 
 type Input struct {
@@ -37,7 +38,14 @@ func SayHi(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 	}
 	time.Sleep(5 * time.Second)
 	log.Println("Default Log: Printing from greet tool")
-	slog.InfoContext(ctx, "Slong: Printing from greet tool")
+	slog.InfoContext(ctx, "Slog: Printing from greet tool")
+
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+	logger.Info("Zap: Printing from greet tool")
+
+	zlog.Print("zerolog: Printing from greet tool")
+	zlog.Info().Msg("zerolog info: Printing from greet tool")
 
 	return nil, Output{Greeting: "Hi " + input.Name}, nil
 }
@@ -58,19 +66,8 @@ func SayBye(ctx context.Context, req *mcp.CallToolRequest, input Input) (
 // injected by otelc rules. The only application-level concern here is the
 // HTTP server lifecycle and graceful shutdown.
 func main() {
-	initLogging("mcp-server")
 	log.Println("Starting server....")
 	runServer(":8080")
-}
-
-// initLogging sends slog records to both stderr and the OpenTelemetry
-// LoggerProvider that the otelc runtime registers globally at startup.
-// slog.SetDefault also routes the standard log package through this handler.
-func initLogging(name string) {
-	slog.SetDefault(slog.New(slog.NewMultiHandler(
-		slog.NewTextHandler(os.Stderr, nil),
-		otelslog.NewHandler(name),
-	)))
 }
 
 func runServer(url string) {

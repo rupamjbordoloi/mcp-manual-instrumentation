@@ -7,10 +7,14 @@
 package tools
 
 import (
+	_ "library/logging/slog"
+	_ "library/logging/zap"
+	_ "library/logging/zerolog"
 	_ "library/server"
 
 	_ "go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init"
-	// _ "go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace"
+	_ "go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace"
+	_ "go.opentelemetry.io/otelc/instrumentation/go.uber.org/zap"
 	_ "go.opentelemetry.io/otelc/instrumentation/log"
 	_ "go.opentelemetry.io/otelc/instrumentation/log/slog"
 	_ "go.opentelemetry.io/otelc/instrumentation/net/http/client"

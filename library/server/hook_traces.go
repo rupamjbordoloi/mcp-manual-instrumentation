@@ -330,16 +330,23 @@ func serverProtocolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 // httpServerSpanContext returns the span context of the HTTP server span for
 // the request being handled.
 //
-// The request context is not a reliable source. The otelhttp handler that
-// http_metrics_wrap puts around the MCP handler extracts the incoming
-// traceparent again, which replaces the server span in the context with the
-// client's span, and its no-op tracer leaves that in place. Bridging it would
-// make the MCP span a sibling of the HTTP server span instead of its child.
+// Normally that is the span in the request context. It is not when something
+// between otelc's net/http instrumentation and this hook has extracted the
+// incoming traceparent into the context again, as an otelhttp handler does
+// unless it is built without propagators (see http_metrics_wrap in
+// mcp.otelc.yaml). The context then holds the client's span, marked remote,
+// and the server span is gone. Bridging that would make the MCP span a sibling
+// of the HTTP server span instead of its child.
 //
-// The span active on the goroutine is still the server span, because otelc's
-// net/http instrumentation started it there, so it is preferred. The request
-// context is the fallback for when goroutine-local storage is unavailable.
+// So a remote span context in the request means "the parent was extracted",
+// not "this is the server span", and the span active on the goroutine is tried
+// instead. The request context stays the last resort.
 func httpServerSpanContext(ctx context.Context) trace.SpanContext {
+	ctxSC := trace.SpanContextFromContext(ctx)
+	if ctxSC.IsValid() && !ctxSC.IsRemote() {
+		return ctxSC
+	}
+
 	if span := runtime.GetSpanFromGLS(); span != nil {
 		if sc := span.SpanContext(); sc.IsValid() {
 			return sc
@@ -361,7 +368,7 @@ func httpServerSpanContext(ctx context.Context) trace.SpanContext {
 		}
 	}
 
-	return trace.SpanContextFromContext(ctx)
+	return ctxSC
 }
 
 // BeforeStreamableHTTP runs once per inbound HTTP request (this is

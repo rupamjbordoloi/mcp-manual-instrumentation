@@ -97,9 +97,17 @@ mcp_server_streamable_http_request:
         before: BeforeStreamableHTTP
         path: "library/server"
 
-# Wraps the MCP handler with otelhttp for HTTP server metrics only
-# (WithTracerProvider(noop...) disables otelhttp's own span creation, since
-# tracing already comes from mcp_server_streamable_http_request above).
+# Wraps the MCP handler with otelhttp for HTTP server metrics only. otelhttp
+# also does tracing work by default, so it is told not to:
+#
+#   WithTracerProvider(noop...)  stops it creating spans.
+#   WithPropagators(<empty>)     stops it extracting the incoming traceparent
+#                                into the request context. Left on, that
+#                                replaces the HTTP server span otelc started
+#                                with the client's span. BeforeStreamableHTTP
+#                                bridges the span in that context, so the MCP
+#                                span would become a sibling of the HTTP server
+#                                span instead of its child.
 http_metrics_wrap:
   target: "**"
   where:
@@ -107,7 +115,8 @@ http_metrics_wrap:
   do:
     - wrap_call:
         replace: |-
-          otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()))
+          otelhttp.NewHandler({{ . }}, "mcp", otelhttp.WithTracerProvider(noop.NewTracerProvider()), otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))
   imports:
     otelhttp: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
     noop: "go.opentelemetry.io/otel/trace/noop"
+    propagation: "go.opentelemetry.io/otel/propagation"

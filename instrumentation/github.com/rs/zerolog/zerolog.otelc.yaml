@@ -1,0 +1,20 @@
+# Adds trace_id/span_id to zerolog events and exports them as OpenTelemetry log
+# records. Applies only to applications that use github.com/rs/zerolog.
+export_zerolog_new:
+  target: github.com/rs/zerolog
+  where:
+    func: New
+  do:
+    - inject_hooks:
+        before: BeforeNew
+        path: "github.hdfcbank.com/HDFCBANK/ps-otel/instrumentation/github.com/rs/zerolog"
+
+trace_zerolog_event_msg:
+  target: github.com/rs/zerolog
+  where:
+    func: msg
+    recv: "*Event"
+  do:
+    - inject_hooks:
+        before: BeforeEventMsg
+        path: "github.hdfcbank.com/HDFCBANK/ps-otel/instrumentation/github.com/rs/zerolog"

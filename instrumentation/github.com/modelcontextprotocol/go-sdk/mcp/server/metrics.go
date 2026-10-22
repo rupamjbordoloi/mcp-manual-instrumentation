@@ -19,15 +19,9 @@ const (
 	attrMCPMessageDirection    = "mcp.message.direction"
 	attrHTTPRequestMethod      = "http.request.method"
 	attrHTTPResponseStatusCode = "http.response.status_code"
-	attrGenAITokenType         = "gen_ai.token.type"
 
 	directionReceived = "received"
 	directionSent     = "sent"
-
-	// tokenTypeInput is the GenAI token type for content the model ingests.
-	// Everything this server returns to an agent (tool results, resource
-	// contents, prompt messages) is input from the model's point of view.
-	tokenTypeInput = "input"
 
 	// otherAttrValue replaces any client-controlled attribute value that is
 	// not on a known, bounded list, so a client cannot inflate metric
@@ -35,10 +29,6 @@ const (
 	otherAttrValue = "_OTHER"
 
 	methodResourcesRead = "resources/read"
-
-	// bytesPerToken is the rule-of-thumb ratio used to estimate LLM tokens
-	// from text, because MCP results carry no native token counts.
-	bytesPerToken = 4
 )
 
 var (
@@ -324,18 +314,6 @@ func (o operationObservation) end(ctx context.Context, errType string) {
 	if o.method == methodResourcesRead {
 		m.resourceReads.Add(ctx, 1, metric.WithAttributes(withErrorType(nil, errType)...))
 	}
-}
-
-func (o operationObservation) tokenAttributes() []attribute.KeyValue {
-	attrs := []attribute.KeyValue{
-		attribute.String(attrMCPMethodName, o.method),
-		attribute.String(attrGenAITokenType, tokenTypeInput),
-	}
-	if o.toolName != "" {
-		attrs = append(attrs, attribute.String(attrGenAIToolName, o.toolName))
-	}
-
-	return attrs
 }
 
 // ---- Tool execution: invocations, duration, errors, message size ----

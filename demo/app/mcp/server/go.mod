@@ -12,16 +12,16 @@ require (
 	github.hdfcbank.com/HDFCBANK/ps-otel/instrumentation v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
 	go.opentelemetry.io/otel/sdk v1.47.0
-	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/trace v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/go.uber.org/zap v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/log v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/log/slog v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/net/http/client v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/net/http/server v0.0.0-20261021153517-5dd2074874c9
-	go.opentelemetry.io/otelc/instrumentation/runtime v0.0.0-20261021153517-5dd2074874c9
+	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/trace v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/go.uber.org/zap v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/log v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/log/slog v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/net/http/client v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/net/http/server v0.0.0-20261009154624-70b4fe80ffb5
+	go.opentelemetry.io/otelc/instrumentation/runtime v0.0.0-20261009154624-70b4fe80ffb5
 	go.uber.org/zap v1.28.0
 )
 
@@ -81,9 +81,9 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/otelc v1.2.0 // indirect
-	go.opentelemetry.io/otelc/instrumentation v0.0.0-20261021153517-5dd2074874c9 // indirect
-	go.opentelemetry.io/otelc/pkg v0.0.0-20261021153517-5dd2074874c9 // indirect
-	go.opentelemetry.io/otelc/pkg/runtime v0.0.0-20261021153517-5dd2074874c9 // indirect
+	go.opentelemetry.io/otelc/instrumentation v0.0.0-20261009154624-70b4fe80ffb5 // indirect
+	go.opentelemetry.io/otelc/pkg v0.0.0-20261009154624-70b4fe80ffb5 // indirect
+	go.opentelemetry.io/otelc/pkg/runtime v0.0.0-20261009154624-70b4fe80ffb5 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
@@ -100,75 +100,3 @@ require (
 	google.golang.org/grpc v1.86.0-dev // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-replace go.opentelemetry.io/otelc/instrumentation => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation
-
-replace go.opentelemetry.io/otelc/instrumentation/database/sql => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\database\sql
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/anthropics/anthropic-sdk-go => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\anthropics\anthropic-sdk-go
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/apache/cassandra-gocql-driver/v2 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\apache\cassandra-gocql-driver\v2
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/aws/aws-sdk-go-v2 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\aws\aws-sdk-go-v2
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/gin-gonic/gin => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\gin-gonic\gin
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/linode/linodego/v2 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\linode\linodego\v2
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/olivere/elastic/v7 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\olivere\elastic\v7
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/openai/openai-go => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\openai\openai-go
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/openai/openai-go/internal/streaming => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\openai\openai-go\internal\streaming
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/openai/openai-go/v2 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\openai\openai-go\v2
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/openai/openai-go/v3 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\openai\openai-go\v3
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/rabbitmq/amqp091-go => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\rabbitmq\amqp091-go
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/redis/go-redis/v9 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\redis\go-redis\v9
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/segmentio/kafka-go/consumer => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\segmentio\kafka-go\consumer
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/segmentio/kafka-go/producer => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\segmentio\kafka-go\producer
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/sirupsen/logrus => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\sirupsen\logrus
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/stripe/stripe-go/v81 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\stripe\stripe-go\v81
-
-replace go.opentelemetry.io/otelc/instrumentation/github.com/stripe/stripe-go/v82 => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\github.com\stripe\stripe-go\v82
-
-replace go.opentelemetry.io/otelc/instrumentation/go.mongodb.org/mongo-driver/mongo => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.mongodb.org\mongo-driver\mongo
-
-replace go.opentelemetry.io/otelc/instrumentation/go.mongodb.org/mongo-driver/v2/mongo => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.mongodb.org\mongo-driver\v2\mongo
-
-replace go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.opentelemetry.io\otel
-
-replace go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/init => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.opentelemetry.io\otel\init
-
-replace go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/sdk/trace => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.opentelemetry.io\otel\sdk\trace
-
-replace go.opentelemetry.io/otelc/instrumentation/go.opentelemetry.io/otel/trace => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.opentelemetry.io\otel\trace
-
-replace go.opentelemetry.io/otelc/instrumentation/go.uber.org/zap => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\go.uber.org\zap
-
-replace go.opentelemetry.io/otelc/instrumentation/google.golang.org/grpc/client => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\google.golang.org\grpc\client
-
-replace go.opentelemetry.io/otelc/instrumentation/google.golang.org/grpc/server => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\google.golang.org\grpc\server
-
-replace go.opentelemetry.io/otelc/instrumentation/k8s.io/client-go => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\k8s.io\client-go
-
-replace go.opentelemetry.io/otelc/instrumentation/log => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\log
-
-replace go.opentelemetry.io/otelc/instrumentation/log/slog => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\log\slog
-
-replace go.opentelemetry.io/otelc/instrumentation/net/http/client => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\net\http\client
-
-replace go.opentelemetry.io/otelc/instrumentation/net/http/server => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\net\http\server
-
-replace go.opentelemetry.io/otelc/instrumentation/runtime => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\instrumentation\runtime
-
-replace go.opentelemetry.io/otelc/pkg => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\pkg
-
-replace go.opentelemetry.io/otelc/pkg/runtime => D:\rupam\go\auto-instrumentation\manual-mcp-server\demo\app\mcp\server\.otelc-build\pkg\runtime
